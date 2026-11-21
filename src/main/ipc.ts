@@ -529,6 +529,8 @@ export function registerIpc(
     }
   };
   const assertNoRunningProjectJobs = () => {
+    if (projectSwitchInProgress)
+      throw new Error("已有專案開啟或另存作業正在執行，請在完成後重試。");
     if (
       activeSubtitleOperations > 0 ||
       subtitleVisualController ||
