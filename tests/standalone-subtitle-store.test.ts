@@ -28,4 +28,29 @@ describe("standalone subtitle drafts", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("keeps per-project drafts isolated and preserves older same-video revisions", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-scope-"));
+    try {
+      const service = new StandaloneSubtitleStore(path.join(root, "workspaces"));
+      const source = path.join(root, "shared.mp4");
+      const first = await service.create(source, "fingerprint", 10000, [
+        { id: "a", startMs: 100, endMs: 1000, text: "A original" },
+      ], undefined, "project-aaaaaaaa");
+      const other = await service.create(source, "fingerprint", 10000, [
+        { id: "b", startMs: 100, endMs: 1000, text: "B" },
+      ], undefined, "project-bbbbbbbb");
+      const second = await service.create(source, "fingerprint", 10000, [
+        { id: "c", startMs: 100, endMs: 1000, text: "A again" },
+      ], undefined, "project-aaaaaaaa");
+      expect(new Set([first.id, other.id, second.id]).size).toBe(3);
+      expect((await service.latest("project-aaaaaaaa"))?.id).toBe(second.id);
+      expect((await service.latest("project-bbbbbbbb"))?.id).toBe(other.id);
+      expect(await service.latest("project-cccccccc")).toBeNull();
+      expect((await service.get(first.id)).cues[0].text).toBe("A original");
+      expect((await service.get(other.id)).ownerProjectId).toBe("project-bbbbbbbb");
+      expect(await readFile(first.draftPath, "utf8")).toContain("A original");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
