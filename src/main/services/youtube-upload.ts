@@ -587,6 +587,34 @@ export class YoutubeUploadService {
         offset = totalBytes;
         onProgress({ phase: "FINALIZING", bytesUploaded: totalBytes, totalBytes, percent: 100 });
       }
+      // A final 308 may acknowledge the entire file before YouTube returns its
+      // video ID. Query the existing session instead of claiming upload failure.
+      if (!uploaded && offset === totalBytes) {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          assertNotAborted(signal);
+          const statusResponse = await this.fetcher(uploadUrl, {
+            method: "PUT",
+            headers: {
+              authorization: `Bearer ${accessToken}`,
+              "content-length": "0",
+              "content-range": `bytes */${totalBytes}`,
+            },
+            redirect: "manual",
+            signal,
+          });
+          if (statusResponse.ok) {
+            uploaded = (await statusResponse.json()) as UploadedVideoResponse;
+            onProgress({ phase: "FINALIZING", bytesUploaded: totalBytes, totalBytes, percent: 100 });
+            break;
+          }
+          if (statusResponse.status !== 308)
+            throw new Error(`YouTube 上傳狀態查詢失敗：${await this.responseError(statusResponse)}`);
+          const range = statusResponse.headers.get("range")?.match(/^bytes=0-(\d+)$/i);
+          if (!range || Number(range[1]) + 1 !== totalBytes)
+            throw new Error("YouTube 續傳狀態與已上傳位元組不一致，請檢查上傳工作狀態。");
+          await this.delay(Math.min(2_000, (attempt + 1) * 400), signal);
+        }
+      }
     } finally {
       await handle.close();
     }
