@@ -34,9 +34,7 @@ describe("render disk reliability", () => {
     const monitor = new RenderDiskMonitor({
       tempRoot: "D:\\RenderTemp",
       outputPath: "C:\\Exports\\final.mp4",
-      tempLocations: [
-        { id: "primary", path: "D:\\RenderTemp", role: "PRIMARY", enabled: true, reserveBytes: 6 * GIB },
-      ],
+      tempLocations: [{ id: "primary", path: "D:\\RenderTemp", role: "PRIMARY", enabled: true, reserveBytes: 6 * GIB }],
       estimatedRemainingWriteBytes: () => 0,
       estimatedFinalOutputBytes: 0,
       diskSpaceForMonitoring: async () => ({ freeBytes: 5 * GIB, capacityBytes: 500 * GIB }),

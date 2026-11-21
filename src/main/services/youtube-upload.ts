@@ -568,8 +568,7 @@ export class YoutubeUploadService {
             throw new Error("YouTube 續傳位置超出本次上傳區間，已停止以避免覆寫或跳過資料。");
           if (acknowledged === offset) {
             stalledAcknowledgements += 1;
-            if (stalledAcknowledgements >= 5)
-              throw new Error("YouTube 多次未確認收到任何資料，已停止以避免無限重試。");
+            if (stalledAcknowledgements >= 5) throw new Error("YouTube 多次未確認收到任何資料，已停止以避免無限重試。");
             await this.delay(Math.min(2_000, stalledAcknowledgements * 250), signal);
           } else {
             stalledAcknowledgements = 0;

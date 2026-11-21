@@ -3,10 +3,7 @@
  * ranges are ignored so media playback can retry with a full response.
  * Supports RFC 9110 suffix ranges such as bytes=-500.
  */
-export function parseHttpByteRange(
-  header: string | null,
-  size: number,
-): { start: number; end: number } | undefined {
+export function parseHttpByteRange(header: string | null, size: number): { start: number; end: number } | undefined {
   if (!header || !Number.isSafeInteger(size) || size <= 0) return undefined;
   const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (!match || (!match[1] && !match[2])) return undefined;

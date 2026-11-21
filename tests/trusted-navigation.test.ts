@@ -16,7 +16,8 @@ describe("Electron renderer navigation boundary", () => {
       "javascript:alert(1)",
       "data:text/html,hi",
       "not-a-url",
-    ]) expect(isTrustedAppNavigation(target, entry, false)).toBe(false);
+    ])
+      expect(isTrustedAppNavigation(target, entry, false)).toBe(false);
   });
   it("limits dev navigation to the explicitly configured dev origin", () => {
     const entry = "http://127.0.0.1:5173/";
