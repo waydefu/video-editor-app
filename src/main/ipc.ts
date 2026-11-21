@@ -1709,8 +1709,16 @@ export function registerIpc(
   ipcMain.handle("subtitle:visual-preflight", (_event, options: SubtitleVisualAnalysisOptions) =>
     subtitlePreflight(options),
   );
-  ipcMain.handle("subtitle:workspace:get", () => standaloneSubtitles.latest());
-  ipcMain.handle("subtitle:workspace:import-srt", async (event) => {
+  const ownedSubtitleWorkspace = async (id: string) => {
+    const workspace = await standaloneSubtitles.get(id);
+    if ((workspace.ownerProjectId ?? workspace.sourceProjectId) !== store.getProject().id)
+      throw new Error("此字幕工作區不屬於目前專案；請切回原專案。");
+    return workspace;
+  };
+  ipcMain.handle("subtitle:workspace:get", () => standaloneSubtitles.latest(store.getProject().id));
+  ipcMain.handle("subtitle:workspace:import-srt", (event) =>
+    withProjectOperation(async () => {
+    const selectedProjectId = store.getProject().id;
     const selected = await currentSubtitleVideoSelection();
     if (!selected.path) throw new Error("請先選擇要檢查的影片，再匯入既有 SRT。");
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
@@ -1732,6 +1740,8 @@ export function registerIpc(
       throw new Error("SRT 字幕超出所選影片時長；來源檔保持不變，請選擇相符影片或修正副本。");
     const file = await stat(selected.path);
     const fingerprint = createHash("sha256").update(`${selected.path}\0${file.size}\0${file.mtimeMs}`).digest("hex");
+    if (store.getProject().id !== selectedProjectId)
+      throw new Error("匯入字幕期間已切換專案，請重新匯入。");
     await userPreferences.rememberDirectory("SUBTITLE_INPUT", picked.filePaths[0]);
     return standaloneSubtitles.create(
       selected.path,
@@ -1743,9 +1753,12 @@ export function registerIpc(
         origin: "IMPORTED_SRT" as const,
         reviewStatus: "DRAFT" as const,
       })),
+      undefined,
+      selectedProjectId,
     );
-  });
-  ipcMain.handle("subtitle:project-ai-check:prepare", async () => {
+    }));
+  ipcMain.handle("subtitle:project-ai-check:prepare", () =>
+    withProjectOperation(async () => {
     const project = store.getProject();
     if (project.introSegments.length > 0)
       throw new Error(
@@ -1767,25 +1780,29 @@ export function registerIpc(
       projectId: project.id,
       timelineRevision: project.timelineRevision,
     });
-  });
+    }));
   ipcMain.handle("subtitle:workspace:save", (_event, id: string, cues: SubtitleCue[]) =>
-    standaloneSubtitles.save(id, cues),
+    withProjectOperation(async () => {
+      await ownedSubtitleWorkspace(id);
+      return standaloneSubtitles.save(id, cues);
+    }),
   );
-  ipcMain.handle("subtitle:workspace:export", async (_event, id: string, token: string) => {
+  ipcMain.handle("subtitle:workspace:export", (_event, id: string, token: string) =>
+    withProjectOperation(async () => {
     const selected = subtitleOutputTokens.get(token);
     if (!selected || Date.now() - selected.createdAt > 30 * 60 * 1000) throw new Error("請重新選擇字幕儲存位置。");
-    const workspace = await standaloneSubtitles.get(id);
+    const workspace = await ownedSubtitleWorkspace(id);
     subtitleOutputTokens.delete(token);
     const backupPath = await backupExistingSubtitleOutput(selected.outputPath);
     const result = await exportSrt(workspace.cues, selected.outputPath);
     return { ...result, backupPath };
-  });
+    }));
   const evidenceFrameCache = new Map<string, string>();
   const pendingEvidenceFrames = new Map<string, Promise<{ url: string }>>();
   let evidenceFrameQueue: Promise<unknown> = Promise.resolve();
   const subtitleEvidenceFrame = async (id: string, timestampMs: number): Promise<{ url: string }> => {
     if (!Number.isFinite(timestampMs)) throw new Error("字幕影格時間無效。");
-    const workspace = await standaloneSubtitles.get(id);
+    const workspace = await ownedSubtitleWorkspace(id);
     await standaloneSubtitles.validateSource(workspace);
     const startMs = Math.max(0, Math.min(workspace.videoDurationMs - 1, Math.round(timestampMs)));
     const key = `${id}:${startMs}`;
@@ -1834,7 +1851,7 @@ export function registerIpc(
   ): Promise<SubtitleAiCheckJobSnapshot> => {
     if (!request.enabled) throw new Error("逐筆 AI 檢查預設關閉；請先明確勾選啟用。");
     if (subtitleAiCheckController) throw new Error("逐筆 AI 字幕檢查正在執行中。");
-    const workspace = await standaloneSubtitles.get(request.workspaceId);
+    const workspace = await ownedSubtitleWorkspace(request.workspaceId);
     const options = {
       enabled: true,
       interactiveConfirmation: request.interactiveConfirmation !== false,
@@ -1926,7 +1943,7 @@ export function registerIpc(
     try {
       for (let index = snapshot.progress.nextCueIndex; index < workspace.cues.length; index += 1) {
         if (controller.signal.aborted) throw new DOMException("AI 字幕檢查已停止。", "AbortError");
-        const latestWorkspace = await standaloneSubtitles.get(workspace.id);
+        const latestWorkspace = await ownedSubtitleWorkspace(workspace.id);
         const latestCueIndex = latestWorkspace.cues.findIndex((item) => item.id === workspace.cues[index].id);
         const cue = latestWorkspace.cues[latestCueIndex];
         if (!cue) {
@@ -2075,7 +2092,7 @@ export function registerIpc(
   };
   ipcMain.handle("subtitle:ai-check:get", () => subtitleAiCheckJobs.load());
   ipcMain.handle("subtitle:ai-check:start", (event, request: SubtitleAiCheckRequest) =>
-    launchSubtitleAiCheck(event, request),
+    withProjectOperation(() => launchSubtitleAiCheck(event, request)),
   );
   ipcMain.handle("subtitle:ai-check:pause", async () => {
     subtitleAiCheckPaused = true;
@@ -2095,19 +2112,21 @@ export function registerIpc(
     }
     return snapshot;
   });
-  ipcMain.handle("subtitle:ai-check:resume", async (event) => {
+  ipcMain.handle("subtitle:ai-check:resume", (event) =>
+    withProjectOperation(async () => {
     const saved = await subtitleAiCheckJobs.load();
     if (!saved) throw new Error("找不到可繼續的逐筆 AI 字幕檢查工作。");
     return launchSubtitleAiCheck(event, { workspaceId: saved.workspaceId, ...saved.options }, true);
-  });
-  ipcMain.handle("subtitle:ai-check:action", async (_event, action: SubtitleAiCheckAction) => {
+    }));
+  ipcMain.handle("subtitle:ai-check:action", (_event, action: SubtitleAiCheckAction) =>
+    withProjectOperation(async () => {
     const snapshot = await subtitleAiCheckJobs.load();
     if (!snapshot || snapshot.workspaceId !== action.workspaceId)
       throw new Error("逐筆 AI 字幕檢查工作不存在或已過期。");
     const proposalIndex = snapshot.proposals.findIndex((item) => item.id === action.proposalId);
     if (proposalIndex < 0) throw new Error("找不到這筆 AI 字幕建議。");
     if (snapshot.progress.status === "RUNNING") throw new Error("請先暫停逐筆 AI 檢查，再處理建議。");
-    const workspace = await standaloneSubtitles.get(action.workspaceId);
+    const workspace = await ownedSubtitleWorkspace(action.workspaceId);
     const linkedProject = workspace.sourceProjectId ? store.getProject() : undefined;
     if (
       (action.action === "APPLY" || action.action === "EDIT") &&
@@ -2140,7 +2159,7 @@ export function registerIpc(
       proposal: resolved.proposal,
       conflict: resolved.conflict,
     };
-  });
+    }));
   let subtitleVisualResumeData: {
     videoPath?: string;
     selectionReason?: "PROJECT_CONCAT" | "LATEST_CONCAT" | "MANUAL_PATH" | "NONE";
