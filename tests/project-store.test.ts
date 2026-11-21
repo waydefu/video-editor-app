@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SourceAsset } from "../src/shared/domain";
-import { ProjectStore } from "../src/main/services/project-store";
+import { ProjectStore, sameProjectFilePath } from "../src/main/services/project-store";
 import { mainRenderSelections, retainedRangesForAsset } from "../src/shared/editing-rules";
 
 const tempRoots: string[] = [];
@@ -50,6 +50,12 @@ afterEach(async () => {
 });
 
 describe("ProjectStore", () => {
+  it("treats Windows same-file capitalization as one project, without conflating other paths", () => {
+    expect(sameProjectFilePath("C:\\Projects\\Video.swproj", "c:\\projects\\VIDEO.swproj", true)).toBe(true);
+    expect(sameProjectFilePath("C:\\Projects\\Video.swproj", "C:\\Projects\\Other.swproj", true)).toBe(false);
+    expect(sameProjectFilePath("/tmp/Video.swproj", "/tmp/video.swproj", false)).toBe(false);
+  });
+
   it("undoes and redoes project-only changes while never deleting source files", async () => {
     const root = await tempRoot();
     const sourcePath = path.join(root, "復原來源.mp4");
