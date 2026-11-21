@@ -713,6 +713,7 @@ export function registerIpc(
   ipcMain.handle("project:get-file-state", () => store.getProjectFileState());
   ipcMain.handle("project:save", () => store.saveProject());
   ipcMain.handle("project:save-as", async (event) => {
+    assertNoRunningProjectJobs();
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const safeName =
       store
@@ -732,9 +733,15 @@ export function registerIpc(
     if (result.canceled || !result.filePath) return null;
     const filePath =
       path.extname(result.filePath).toLowerCase() === ".swproj" ? result.filePath : `${result.filePath}.swproj`;
-    await userPreferences.rememberDirectory("PROJECT", filePath);
-    const projectName = path.basename(filePath, path.extname(filePath)).trim();
-    return store.saveProjectAs(filePath, projectName);
+    assertNoRunningProjectJobs();
+    projectSwitchInProgress = true;
+    try {
+      await userPreferences.rememberDirectory("PROJECT", filePath);
+      const projectName = path.basename(filePath, path.extname(filePath)).trim();
+      return await store.saveProjectAs(filePath, projectName);
+    } finally {
+      projectSwitchInProgress = false;
+    }
   });
   ipcMain.handle("project:open", async (event) => {
     assertNoRunningProjectJobs();
