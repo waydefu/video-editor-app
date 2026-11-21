@@ -26,9 +26,10 @@ export class StandaloneSubtitleStore {
     videoDurationMs: number,
     cues: SubtitleCue[],
     source?: { projectId: string; timelineRevision: number },
+    ownerProjectId?: string,
   ): Promise<StandaloneSubtitleWorkspace> {
     const id = createHash("sha256")
-      .update(source ? `${videoFingerprint}\0${source.projectId}\0${source.timelineRevision}` : videoFingerprint)
+      .update(`${videoFingerprint}\0${source?.projectId ?? ownerProjectId ?? "legacy"}\0${randomUUID()}`)
       .digest("hex");
     const workspace: StandaloneSubtitleWorkspace = {
       id,
@@ -38,6 +39,7 @@ export class StandaloneSubtitleStore {
       cues,
       draftPath: path.join(this.root, id, `${path.parse(videoPath).name}.ai-draft.srt`),
       updatedAt: new Date().toISOString(),
+      ownerProjectId: source?.projectId ?? ownerProjectId,
       sourceProjectId: source?.projectId,
       sourceTimelineRevision: source?.timelineRevision,
     };
@@ -49,10 +51,18 @@ export class StandaloneSubtitleStore {
     workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return workspace;
   }
-  async latest(): Promise<StandaloneSubtitleWorkspace | null> {
+  private latestPointerPath(projectId?: string): string {
+    if (!projectId) return path.join(this.root, "latest.json"); // Preserve legacy drafts without auto-assigning them.
+    if (!/^[a-zA-Z0-9-]{8,80}$/.test(projectId)) throw new Error("字幕專案識別碼無效。");
+    return path.join(this.root, "latest-by-project", `${projectId}.json`);
+  }
+  async latest(projectId?: string): Promise<StandaloneSubtitleWorkspace | null> {
     try {
-      const pointer = JSON.parse(await readFile(path.join(this.root, "latest.json"), "utf8"));
-      return await this.get(pointer.id);
+      const pointer = JSON.parse(await readFile(this.latestPointerPath(projectId), "utf8")) as { id?: string };
+      if (!pointer.id) return null;
+      const workspace = await this.get(pointer.id);
+      if (projectId && (workspace.ownerProjectId ?? workspace.sourceProjectId) !== projectId) return null;
+      return workspace;
     } catch {
       return null;
     }
@@ -84,7 +94,7 @@ export class StandaloneSubtitleStore {
     workspace.cues = sorted;
     await this.atomic(this.workspacePath(workspace.id), JSON.stringify(workspace, null, 2));
     await this.atomic(workspace.draftPath, sorted.length ? serializeSrt(sorted) : "");
-    await this.atomic(path.join(this.root, "latest.json"), JSON.stringify({ id: workspace.id }));
+    await this.atomic(this.latestPointerPath(workspace.ownerProjectId), JSON.stringify({ id: workspace.id }));
     workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return structuredClone(workspace);
   }
