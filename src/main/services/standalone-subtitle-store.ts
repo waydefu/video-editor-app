@@ -53,8 +53,10 @@ export class StandaloneSubtitleStore {
   }
   private latestPointerPath(projectId?: string): string {
     if (!projectId) return path.join(this.root, "latest.json"); // Preserve legacy drafts without auto-assigning them.
-    if (!/^[a-zA-Z0-9-]{8,80}$/.test(projectId)) throw new Error("字幕專案識別碼無效。");
-    return path.join(this.root, "latest-by-project", `${projectId}.json`);
+    if (!projectId.trim()) throw new Error("字幕專案識別碼無效。");
+    // Legacy manifests may use short or non-UUID IDs; hashing also prevents path traversal.
+    const key = createHash("sha256").update(projectId).digest("hex");
+    return path.join(this.root, "latest-by-project", `${key}.json`);
   }
   async latest(projectId?: string): Promise<StandaloneSubtitleWorkspace | null> {
     try {
