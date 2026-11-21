@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { parseHttpByteRange } from "./http-byte-range";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { protocol } from "electron";
@@ -20,18 +21,6 @@ const VARIANTS: Record<string, PreviewVariant> = {
 
 function mimeType(variant: PreviewVariant): string {
   return variant === "VIDEO_PROXY" || variant === "VIDEO_CLIP_PROXY" ? "video/mp4" : "image/jpeg";
-}
-
-function parseRange(range: string | null, size: number): { start: number; end: number } | undefined {
-  if (!range) return undefined;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
-  if (!match) return undefined;
-  const start = match[1] ? Number(match[1]) : 0;
-  const end = match[2] ? Number(match[2]) : size - 1;
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) {
-    return undefined;
-  }
-  return { start, end: Math.min(end, size - 1) };
 }
 
 function streamBody(filePath: string, start?: number, end?: number): BodyInit {
@@ -92,7 +81,7 @@ export function registerPreviewProtocol(
         const cacheKey = url.pathname.split("/").filter(Boolean)[0] ?? "";
         const filePath = await audioPreviews.resolveExisting(cacheKey);
         const fileStat = await stat(filePath);
-        const range = parseRange(request.headers.get("range"), fileStat.size);
+        const range = parseHttpByteRange(request.headers.get("range"), fileStat.size);
         const headers = { "Accept-Ranges": "bytes", "Content-Type": "audio/mp4", "Cache-Control": "private, no-store" };
         if (range)
           return new Response(streamBody(filePath, range.start, range.end), {
@@ -109,7 +98,7 @@ export function registerPreviewProtocol(
         const jobId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
         const output = await outputHistory.get(jobId);
         const fileStat = await stat(output.outputPath);
-        const range = parseRange(request.headers.get("range"), fileStat.size);
+        const range = parseHttpByteRange(request.headers.get("range"), fileStat.size);
         const baseHeaders = {
           "Accept-Ranges": "bytes",
           "Content-Type": "video/mp4",
@@ -161,7 +150,7 @@ export function registerPreviewProtocol(
       }
       if (url.hostname === "asset" && url.pathname === "/dunes-shutter.mp3" && photoSoundPath) {
         const fileStat = await stat(photoSoundPath);
-        const range = parseRange(request.headers.get("range"), fileStat.size);
+        const range = parseHttpByteRange(request.headers.get("range"), fileStat.size);
         if (range)
           return new Response(streamBody(photoSoundPath, range.start, range.end), {
             status: 206,
@@ -189,7 +178,7 @@ export function registerPreviewProtocol(
           return new Response("Not found", { status: 404 });
         const fileStat = await stat(track.sourcePath);
         if (!fileStat.isFile() || fileStat.size <= 0) return new Response("Not found", { status: 404 });
-        const range = parseRange(request.headers.get("range"), fileStat.size);
+        const range = parseHttpByteRange(request.headers.get("range"), fileStat.size);
         const headers = {
           "Accept-Ranges": "bytes",
           "Content-Type": audioMimeType(track.sourcePath),
@@ -212,7 +201,7 @@ export function registerPreviewProtocol(
         const cacheKey = url.pathname.split("/").filter(Boolean)[0];
         const filePath = await subtitlePreviews.resolveExisting(cacheKey ?? "");
         const fileStat = await stat(filePath);
-        const range = parseRange(request.headers.get("range"), fileStat.size);
+        const range = parseHttpByteRange(request.headers.get("range"), fileStat.size);
         if (range)
           return new Response(streamBody(filePath, range.start, range.end), {
             status: 206,
@@ -248,7 +237,7 @@ export function registerPreviewProtocol(
       const fileStat = await stat(filePath);
       const range =
         variant === "VIDEO_PROXY" || variant === "VIDEO_CLIP_PROXY"
-          ? parseRange(request.headers.get("range"), fileStat.size)
+          ? parseHttpByteRange(request.headers.get("range"), fileStat.size)
           : undefined;
       if (range) {
         return new Response(streamBody(filePath, range.start, range.end), {
@@ -284,7 +273,7 @@ export function registerPreviewProtocol(
         const videoPath = resolveSubtitleVideo(assetId);
         if (!videoPath) return new Response("Not found", { status: 404 });
         const file = await stat(videoPath);
-        const range = parseRange(request.headers.get("range"), file.size);
+        const range = parseHttpByteRange(request.headers.get("range"), file.size);
         const headers = {
           "Accept-Ranges": "bytes",
           "Content-Type": sourceMimeType(videoPath),
@@ -308,7 +297,7 @@ export function registerPreviewProtocol(
         return new Response("Not found", { status: 404 });
       const fileStat = await stat(asset.sourcePath);
       if (!fileStat.isFile()) return new Response("Source unavailable", { status: 404 });
-      const range = parseRange(request.headers.get("range"), fileStat.size);
+      const range = parseHttpByteRange(request.headers.get("range"), fileStat.size);
       const baseHeaders = {
         "Accept-Ranges": "bytes",
         "Content-Type": sourceMimeType(asset.sourcePath),
