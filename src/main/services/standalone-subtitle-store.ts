@@ -49,10 +49,10 @@ export class StandaloneSubtitleStore {
     };
     return this.write(workspace);
   }
-  async get(id: string): Promise<StandaloneSubtitleWorkspace> {
+  async get(id: string, authorizePreview = true): Promise<StandaloneSubtitleWorkspace> {
     const workspace = JSON.parse(await readFile(this.workspacePath(id), "utf8")) as StandaloneSubtitleWorkspace;
     if (workspace.id !== id || !Array.isArray(workspace.cues)) throw new Error("獨立字幕工作區格式無效。");
-    workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
+    if (authorizePreview) workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return workspace;
   }
   private latestPointerPath(projectId?: string): string {
@@ -62,18 +62,21 @@ export class StandaloneSubtitleStore {
     const key = createHash("sha256").update(projectId).digest("hex");
     return path.join(this.root, "latest-by-project", `${key}.json`);
   }
-  async latest(projectId?: string): Promise<StandaloneSubtitleWorkspace | null> {
+  async latest(projectId?: string, authorizePreview = true): Promise<StandaloneSubtitleWorkspace | null> {
     try {
       const pointer = JSON.parse(await readFile(this.latestPointerPath(projectId), "utf8")) as { id?: string };
       if (!pointer.id) return null;
-      const workspace = await this.get(pointer.id);
+      const workspace = await this.get(pointer.id, false);
       if (projectId && (workspace.ownerProjectId ?? workspace.sourceProjectId) !== projectId) return null;
+      if (authorizePreview) workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
       return workspace;
     } catch {
       if (projectId) {
         // Safely expose pre-migration *project-linked* drafts, never arbitrary global VIDEO_FIRST drafts.
-        const legacy = await this.latest();
-        return legacy?.sourceProjectId === projectId ? legacy : null;
+        const legacy = await this.latest(undefined, false);
+        if (legacy?.sourceProjectId !== projectId) return null;
+        if (authorizePreview) legacy.previewUrl = authorizeSubtitleVideo(legacy.videoPath);
+        return legacy;
       }
       return null;
     }
