@@ -28,6 +28,24 @@ describe("standalone subtitle drafts", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("supports legacy short or non-UUID project IDs without escaping the workspace root", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-legacy-id-"));
+    try {
+      const service = new StandaloneSubtitleStore(path.join(root, "workspaces"));
+      const workspace = await service.create(
+        path.join(root, "shared.mp4"),
+        "fingerprint",
+        10000,
+        [{ id: "cue", startMs: 100, endMs: 1000, text: "legacy project" }],
+        undefined,
+        "舊專案",
+      );
+      expect((await service.latest("舊專案"))?.id).toBe(workspace.id);
+      expect(await service.latest("其他專案")).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("keeps per-project drafts isolated and preserves older same-video revisions", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-scope-"));
     try {
