@@ -252,14 +252,24 @@ export function registerIpc(
     path.join(app.getPath("userData"), "jobs", "subtitle-visual", `${projectSubtitleKey(store.getProject().id)}.json`);
   const subtitleAiCheckStore = () =>
     new SubtitleAiCheckJobStore(
-      path.join(app.getPath("userData"), "jobs", "subtitle-ai-check", `${projectSubtitleKey(store.getProject().id)}.json`),
+      path.join(
+        app.getPath("userData"),
+        "jobs",
+        "subtitle-ai-check",
+        `${projectSubtitleKey(store.getProject().id)}.json`,
+      ),
     );
   const subtitleAiCheckJobs = {
     load: () => subtitleAiCheckStore().load(),
     save: (snapshot: SubtitleAiCheckJobSnapshot) => subtitleAiCheckStore().save(snapshot),
   };
   const subtitleSourcePreferencePath = () =>
-    path.join(app.getPath("userData"), "settings", "subtitle-analysis-sources", `${projectSubtitleKey(store.getProject().id)}.json`);
+    path.join(
+      app.getPath("userData"),
+      "settings",
+      "subtitle-analysis-sources",
+      `${projectSubtitleKey(store.getProject().id)}.json`,
+    );
   let voiceInputController: AbortController | undefined;
   let musicSuggestionController: AbortController | undefined;
   let audioPreviewController: AbortController | undefined;
@@ -1622,27 +1632,27 @@ export function registerIpc(
     withProjectOperation(async () => {
       const selectedProjectId = store.getProject().id;
       const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-    const options: Electron.OpenDialogOptions = {
-      title: "選擇 AI 字幕分析影片（只讀）",
-      properties: ["openFile"],
-      filters: [{ name: "影片", extensions: ["mp4", "mov", "mkv", "m4v", "avi", "webm"] }],
-    };
-    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
-    if (result.canceled || !result.filePaths[0]) return null;
-    const selectedPath = path.resolve(result.filePaths[0]);
-    const file = await stat(selectedPath);
-    if (!file.isFile() || file.size < 1) throw new Error("選取的分析影片不存在或是空檔案。");
-    if (store.getProject().id !== selectedProjectId)
-      throw new Error("選取影片期間已切換專案；請重新選擇。");
-    lastManualSubtitleVideoPath = selectedPath;
-    explicitSubtitleVideoPath = selectedPath;
-    resumedSubtitleSelectionReason = undefined;
-    await mkdir(path.dirname(subtitleSourcePreferencePath()), { recursive: true });
-    const preferencePartial = `${subtitleSourcePreferencePath()}.${process.pid}.partial`;
-    await writeFile(preferencePartial, JSON.stringify({ schemaVersion: 1, path: selectedPath }, null, 2), "utf8");
-    await rename(preferencePartial, subtitleSourcePreferencePath());
-    return describeSubtitleVideo({ reason: "MANUAL_PATH", path: selectedPath });
-    }));
+      const options: Electron.OpenDialogOptions = {
+        title: "選擇 AI 字幕分析影片（只讀）",
+        properties: ["openFile"],
+        filters: [{ name: "影片", extensions: ["mp4", "mov", "mkv", "m4v", "avi", "webm"] }],
+      };
+      const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+      if (result.canceled || !result.filePaths[0]) return null;
+      const selectedPath = path.resolve(result.filePaths[0]);
+      const file = await stat(selectedPath);
+      if (!file.isFile() || file.size < 1) throw new Error("選取的分析影片不存在或是空檔案。");
+      if (store.getProject().id !== selectedProjectId) throw new Error("選取影片期間已切換專案；請重新選擇。");
+      lastManualSubtitleVideoPath = selectedPath;
+      explicitSubtitleVideoPath = selectedPath;
+      resumedSubtitleSelectionReason = undefined;
+      await mkdir(path.dirname(subtitleSourcePreferencePath()), { recursive: true });
+      const preferencePartial = `${subtitleSourcePreferencePath()}.${process.pid}.partial`;
+      await writeFile(preferencePartial, JSON.stringify({ schemaVersion: 1, path: selectedPath }, null, 2), "utf8");
+      await rename(preferencePartial, subtitleSourcePreferencePath());
+      return describeSubtitleVideo({ reason: "MANUAL_PATH", path: selectedPath });
+    }),
+  );
   const publishSubtitleVisualProgress = (
     event: Electron.IpcMainInvokeEvent,
     progress: SubtitleVisualAnalysisProgress,
@@ -1718,69 +1728,72 @@ export function registerIpc(
   ipcMain.handle("subtitle:workspace:get", () => standaloneSubtitles.latest(store.getProject().id));
   ipcMain.handle("subtitle:workspace:import-srt", (event) =>
     withProjectOperation(async () => {
-    const selectedProjectId = store.getProject().id;
-    const selected = await currentSubtitleVideoSelection();
-    if (!selected.path) throw new Error("請先選擇要檢查的影片，再匯入既有 SRT。");
-    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-    const dialogOptions: Electron.OpenDialogOptions = {
-      title: "匯入既有 SRT 到獨立影片檢查工作區",
-      defaultPath: userPreferences.getLastDirectory("SUBTITLE_INPUT", app.getPath("documents")),
-      properties: ["openFile"],
-      filters: [{ name: "SubRip 字幕", extensions: ["srt"] }],
-    };
-    const picked = window
-      ? await dialog.showOpenDialog(window, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions);
-    if (picked.canceled || !picked.filePaths[0]) return null;
-    const imported = await importSrtFile(picked.filePaths[0]);
-    const media = await subtitleVideoProbe.probe(selected.path);
-    const durationMs = media.durationMs ?? 0;
-    if (durationMs <= 0) throw new Error("所選影片沒有有效時長。");
-    if (imported.cues.some((cue) => cue.endMs > durationMs))
-      throw new Error("SRT 字幕超出所選影片時長；來源檔保持不變，請選擇相符影片或修正副本。");
-    const file = await stat(selected.path);
-    const fingerprint = createHash("sha256").update(`${selected.path}\0${file.size}\0${file.mtimeMs}`).digest("hex");
-    if (store.getProject().id !== selectedProjectId)
-      throw new Error("匯入字幕期間已切換專案，請重新匯入。");
-    await userPreferences.rememberDirectory("SUBTITLE_INPUT", picked.filePaths[0]);
-    return standaloneSubtitles.create(
-      selected.path,
-      fingerprint,
-      durationMs,
-      imported.cues.map((cue) => ({
-        ...cue,
-        timelineScope: "MAIN" as const,
-        origin: "IMPORTED_SRT" as const,
-        reviewStatus: "DRAFT" as const,
-      })),
-      undefined,
-      selectedProjectId,
-    );
-    }));
+      const selectedProjectId = store.getProject().id;
+      const selected = await currentSubtitleVideoSelection();
+      if (!selected.path) throw new Error("請先選擇要檢查的影片，再匯入既有 SRT。");
+      const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+      const dialogOptions: Electron.OpenDialogOptions = {
+        title: "匯入既有 SRT 到獨立影片檢查工作區",
+        defaultPath: userPreferences.getLastDirectory("SUBTITLE_INPUT", app.getPath("documents")),
+        properties: ["openFile"],
+        filters: [{ name: "SubRip 字幕", extensions: ["srt"] }],
+      };
+      const picked = window
+        ? await dialog.showOpenDialog(window, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
+      if (picked.canceled || !picked.filePaths[0]) return null;
+      const imported = await importSrtFile(picked.filePaths[0]);
+      const media = await subtitleVideoProbe.probe(selected.path);
+      const durationMs = media.durationMs ?? 0;
+      if (durationMs <= 0) throw new Error("所選影片沒有有效時長。");
+      if (imported.cues.some((cue) => cue.endMs > durationMs))
+        throw new Error("SRT 字幕超出所選影片時長；來源檔保持不變，請選擇相符影片或修正副本。");
+      const file = await stat(selected.path);
+      const fingerprint = createHash("sha256").update(`${selected.path}\0${file.size}\0${file.mtimeMs}`).digest("hex");
+      if (store.getProject().id !== selectedProjectId) throw new Error("匯入字幕期間已切換專案，請重新匯入。");
+      await userPreferences.rememberDirectory("SUBTITLE_INPUT", picked.filePaths[0]);
+      return standaloneSubtitles.create(
+        selected.path,
+        fingerprint,
+        durationMs,
+        imported.cues.map((cue) => ({
+          ...cue,
+          timelineScope: "MAIN" as const,
+          origin: "IMPORTED_SRT" as const,
+          reviewStatus: "DRAFT" as const,
+        })),
+        undefined,
+        selectedProjectId,
+      );
+    }),
+  );
   ipcMain.handle("subtitle:project-ai-check:prepare", () =>
     withProjectOperation(async () => {
-    const project = store.getProject();
-    if (project.introSegments.length > 0)
-      throw new Error(
-        "目前專案含片頭，片頭與正片字幕使用各自時間軸；為避免把合併成品時間誤套回專案，v0.88 暫不建立可回寫的全專案 AI 檢查工作區。可使用獨立影片工作區，只保存 AI draft。",
-      );
-    const selected = await currentSubtitleVideoSelection();
-    if (!selected.path || selected.reason !== "PROJECT_CONCAT")
-      throw new Error(
-        "AI 檢查現有專案字幕只接受帶有目前 projectId 的成功輸出；legacy／外部影片請使用獨立影片字幕工作區。",
-      );
-    const media = await subtitleVideoProbe.probe(selected.path);
-    const durationMs = media.durationMs ?? 0;
-    const projectDurationMs = buildTimelinePlan(project, { includeIntro: project.introSegments.length > 0 }).durationMs;
-    const compatibility = subtitleTimelineCompatibility(projectDurationMs, durationMs);
-    if (!compatibility.compatible) throw new Error("目前專案輸出時長與時間線不相容，不能檢查或套回專案字幕。");
-    const file = await stat(selected.path);
-    const fingerprint = createHash("sha256").update(`${selected.path}\0${file.size}\0${file.mtimeMs}`).digest("hex");
-    return standaloneSubtitles.create(selected.path, fingerprint, durationMs, structuredClone(project.subtitleCues), {
-      projectId: project.id,
-      timelineRevision: project.timelineRevision,
-    });
-    }));
+      const project = store.getProject();
+      if (project.introSegments.length > 0)
+        throw new Error(
+          "目前專案含片頭，片頭與正片字幕使用各自時間軸；為避免把合併成品時間誤套回專案，v0.88 暫不建立可回寫的全專案 AI 檢查工作區。可使用獨立影片工作區，只保存 AI draft。",
+        );
+      const selected = await currentSubtitleVideoSelection();
+      if (!selected.path || selected.reason !== "PROJECT_CONCAT")
+        throw new Error(
+          "AI 檢查現有專案字幕只接受帶有目前 projectId 的成功輸出；legacy／外部影片請使用獨立影片字幕工作區。",
+        );
+      const media = await subtitleVideoProbe.probe(selected.path);
+      const durationMs = media.durationMs ?? 0;
+      const projectDurationMs = buildTimelinePlan(project, {
+        includeIntro: project.introSegments.length > 0,
+      }).durationMs;
+      const compatibility = subtitleTimelineCompatibility(projectDurationMs, durationMs);
+      if (!compatibility.compatible) throw new Error("目前專案輸出時長與時間線不相容，不能檢查或套回專案字幕。");
+      const file = await stat(selected.path);
+      const fingerprint = createHash("sha256").update(`${selected.path}\0${file.size}\0${file.mtimeMs}`).digest("hex");
+      return standaloneSubtitles.create(selected.path, fingerprint, durationMs, structuredClone(project.subtitleCues), {
+        projectId: project.id,
+        timelineRevision: project.timelineRevision,
+      });
+    }),
+  );
   ipcMain.handle("subtitle:workspace:save", (_event, id: string, cues: SubtitleCue[]) =>
     withProjectOperation(async () => {
       await ownedSubtitleWorkspace(id);
@@ -1789,14 +1802,15 @@ export function registerIpc(
   );
   ipcMain.handle("subtitle:workspace:export", (_event, id: string, token: string) =>
     withProjectOperation(async () => {
-    const selected = subtitleOutputTokens.get(token);
-    if (!selected || Date.now() - selected.createdAt > 30 * 60 * 1000) throw new Error("請重新選擇字幕儲存位置。");
-    const workspace = await ownedSubtitleWorkspace(id);
-    subtitleOutputTokens.delete(token);
-    const backupPath = await backupExistingSubtitleOutput(selected.outputPath);
-    const result = await exportSrt(workspace.cues, selected.outputPath);
-    return { ...result, backupPath };
-    }));
+      const selected = subtitleOutputTokens.get(token);
+      if (!selected || Date.now() - selected.createdAt > 30 * 60 * 1000) throw new Error("請重新選擇字幕儲存位置。");
+      const workspace = await ownedSubtitleWorkspace(id);
+      subtitleOutputTokens.delete(token);
+      const backupPath = await backupExistingSubtitleOutput(selected.outputPath);
+      const result = await exportSrt(workspace.cues, selected.outputPath);
+      return { ...result, backupPath };
+    }),
+  );
   const evidenceFrameCache = new Map<string, string>();
   const pendingEvidenceFrames = new Map<string, Promise<{ url: string }>>();
   let evidenceFrameQueue: Promise<unknown> = Promise.resolve();
@@ -2114,52 +2128,54 @@ export function registerIpc(
   });
   ipcMain.handle("subtitle:ai-check:resume", (event) =>
     withProjectOperation(async () => {
-    const saved = await subtitleAiCheckJobs.load();
-    if (!saved) throw new Error("找不到可繼續的逐筆 AI 字幕檢查工作。");
-    return launchSubtitleAiCheck(event, { workspaceId: saved.workspaceId, ...saved.options }, true);
-    }));
+      const saved = await subtitleAiCheckJobs.load();
+      if (!saved) throw new Error("找不到可繼續的逐筆 AI 字幕檢查工作。");
+      return launchSubtitleAiCheck(event, { workspaceId: saved.workspaceId, ...saved.options }, true);
+    }),
+  );
   ipcMain.handle("subtitle:ai-check:action", (_event, action: SubtitleAiCheckAction) =>
     withProjectOperation(async () => {
-    const snapshot = await subtitleAiCheckJobs.load();
-    if (!snapshot || snapshot.workspaceId !== action.workspaceId)
-      throw new Error("逐筆 AI 字幕檢查工作不存在或已過期。");
-    const proposalIndex = snapshot.proposals.findIndex((item) => item.id === action.proposalId);
-    if (proposalIndex < 0) throw new Error("找不到這筆 AI 字幕建議。");
-    if (snapshot.progress.status === "RUNNING") throw new Error("請先暫停逐筆 AI 檢查，再處理建議。");
-    const workspace = await ownedSubtitleWorkspace(action.workspaceId);
-    const linkedProject = workspace.sourceProjectId ? store.getProject() : undefined;
-    if (
-      (action.action === "APPLY" || action.action === "EDIT") &&
-      linkedProject &&
-      (linkedProject.id !== workspace.sourceProjectId ||
-        linkedProject.timelineRevision !== workspace.sourceTimelineRevision)
-    )
-      throw new Error("專案時間線已變更；AI 建議保留但不能套用，請重新建立檢查工作。");
-    const targetCues =
-      linkedProject && linkedProject.id === workspace.sourceProjectId ? linkedProject.subtitleCues : workspace.cues;
-    const resolved = resolveSubtitleAiCheckAction(
-      targetCues,
-      snapshot.proposals[proposalIndex],
-      action,
-      workspace.videoDurationMs,
-    );
-    snapshot.proposals[proposalIndex] = resolved.proposal;
-    const updatedWorkspace =
-      action.action === "APPLY" || action.action === "EDIT"
-        ? await standaloneSubtitles.save(workspace.id, resolved.cues)
-        : workspace;
-    const updatedProject =
-      (action.action === "APPLY" || action.action === "EDIT") && linkedProject && !resolved.conflict
-        ? await store.setSubtitleCues(resolved.cues)
-        : undefined;
-    await subtitleAiCheckJobs.save(snapshot);
-    return {
-      workspace: updatedWorkspace,
-      project: updatedProject,
-      proposal: resolved.proposal,
-      conflict: resolved.conflict,
-    };
-    }));
+      const snapshot = await subtitleAiCheckJobs.load();
+      if (!snapshot || snapshot.workspaceId !== action.workspaceId)
+        throw new Error("逐筆 AI 字幕檢查工作不存在或已過期。");
+      const proposalIndex = snapshot.proposals.findIndex((item) => item.id === action.proposalId);
+      if (proposalIndex < 0) throw new Error("找不到這筆 AI 字幕建議。");
+      if (snapshot.progress.status === "RUNNING") throw new Error("請先暫停逐筆 AI 檢查，再處理建議。");
+      const workspace = await ownedSubtitleWorkspace(action.workspaceId);
+      const linkedProject = workspace.sourceProjectId ? store.getProject() : undefined;
+      if (
+        (action.action === "APPLY" || action.action === "EDIT") &&
+        linkedProject &&
+        (linkedProject.id !== workspace.sourceProjectId ||
+          linkedProject.timelineRevision !== workspace.sourceTimelineRevision)
+      )
+        throw new Error("專案時間線已變更；AI 建議保留但不能套用，請重新建立檢查工作。");
+      const targetCues =
+        linkedProject && linkedProject.id === workspace.sourceProjectId ? linkedProject.subtitleCues : workspace.cues;
+      const resolved = resolveSubtitleAiCheckAction(
+        targetCues,
+        snapshot.proposals[proposalIndex],
+        action,
+        workspace.videoDurationMs,
+      );
+      snapshot.proposals[proposalIndex] = resolved.proposal;
+      const updatedWorkspace =
+        action.action === "APPLY" || action.action === "EDIT"
+          ? await standaloneSubtitles.save(workspace.id, resolved.cues)
+          : workspace;
+      const updatedProject =
+        (action.action === "APPLY" || action.action === "EDIT") && linkedProject && !resolved.conflict
+          ? await store.setSubtitleCues(resolved.cues)
+          : undefined;
+      await subtitleAiCheckJobs.save(snapshot);
+      return {
+        workspace: updatedWorkspace,
+        project: updatedProject,
+        proposal: resolved.proposal,
+        conflict: resolved.conflict,
+      };
+    }),
+  );
   let subtitleVisualResumeData: {
     videoPath?: string;
     selectionReason?: "PROJECT_CONCAT" | "LATEST_CONCAT" | "MANUAL_PATH" | "NONE";
@@ -2507,108 +2523,110 @@ export function registerIpc(
   });
   ipcMain.handle("subtitle:visual-job:resume", (event) =>
     withProjectOperation(async () => {
-    const saved = JSON.parse(await readFile(subtitleVisualCheckpointPath(), "utf8")) as {
-      projectId: string;
-      options: SubtitleVisualAnalysisOptions;
-      videoPath?: string;
-      selectionReason?: string;
-    };
-    if (saved.projectId !== store.getProject().id) throw new Error("暫停工作不屬於目前專案。");
-    if (saved.videoPath && path.isAbsolute(saved.videoPath)) {
-      explicitSubtitleVideoPath = saved.videoPath;
-      resumedSubtitleSelectionReason =
-        saved.selectionReason === "PROJECT_CONCAT" || saved.selectionReason === "LATEST_CONCAT"
-          ? saved.selectionReason
-          : "MANUAL_PATH";
-    }
-    if (!subtitleVisualLastOptions) {
-      subtitleVisualLastOptions = saved.options;
-    }
-    return runSubtitleVisualJob(event, subtitleVisualLastOptions);
-    }));
+      const saved = JSON.parse(await readFile(subtitleVisualCheckpointPath(), "utf8")) as {
+        projectId: string;
+        options: SubtitleVisualAnalysisOptions;
+        videoPath?: string;
+        selectionReason?: string;
+      };
+      if (saved.projectId !== store.getProject().id) throw new Error("暫停工作不屬於目前專案。");
+      if (saved.videoPath && path.isAbsolute(saved.videoPath)) {
+        explicitSubtitleVideoPath = saved.videoPath;
+        resumedSubtitleSelectionReason =
+          saved.selectionReason === "PROJECT_CONCAT" || saved.selectionReason === "LATEST_CONCAT"
+            ? saved.selectionReason
+            : "MANUAL_PATH";
+      }
+      if (!subtitleVisualLastOptions) {
+        subtitleVisualLastOptions = saved.options;
+      }
+      return runSubtitleVisualJob(event, subtitleVisualLastOptions);
+    }),
+  );
   ipcMain.handle("subtitle:visual-cue:regenerate", (_event, request: SubtitleVisualCueRegenerateRequest) =>
     withProjectOperation(async () => {
-    const project = store.getProject();
-    const cue = project.subtitleCues.find((item) => item.id === request.cueId);
-    if (!cue || cue.origin !== "AI_VISUAL" || cue.reviewStatus !== "DRAFT")
-      throw new Error("只能重新產生待確認的畫面 AI 草稿。");
-    const selected = await currentSubtitleVideoSelection();
-    if (!selected.path) throw new Error("找不到可分析的成功 Final Output。");
-    const combined = buildTimelinePlan(project, { includeIntro: project.introSegments.length > 0 });
-    const origin =
-      cue.timelineScope === "INTRO"
-        ? (combined.clips.find((clip) => clip.scope === "INTRO")?.outputStartMs ?? 0)
-        : (combined.clips.find((clip) => clip.scope === "MAIN")?.outputStartMs ?? 0);
-    const media = await subtitleVideoProbe.probe(selected.path);
-    const durationMs = media.durationMs ?? 0;
-    const compatibility = subtitleTimelineCompatibility(combined.durationMs, durationMs);
-    if (!compatibility.compatible || selected.reason !== "PROJECT_CONCAT")
-      throw new Error("只有帶目前 projectId 的成功輸出可更新專案字幕；請改用獨立草稿。");
-    const center = origin + Math.round((cue.startMs + cue.endMs) / 2);
-    const startMs = Math.max(0, center - 1_000);
-    const endMs = Math.min(durationMs, center + 1_001);
-    const { provider } = await subtitleProvider(request.provider);
-    const file = await stat(selected.path);
-    const videoFingerprint = createHash("sha256")
-      .update(`${selected.path}\0${file.size}\0${file.mtimeMs}`)
-      .digest("hex");
-    const contextRevision = createHash("sha256")
-      .update(JSON.stringify([cue.id, cue.startMs, cue.endMs, request.instruction, request.displayLanguage]))
-      .digest("hex");
-    const drafts: import("./services/subtitle-vision-orchestrator").SubtitleVisionDraft[] = [];
-    await subtitleFrameExtractor.extractBatches(
-      {
-        projectId: project.id,
-        sourcePath: selected.path,
-        cacheRoot: path.join(app.getPath("userData"), "cache"),
-        segments: [{ type: "MAIN", startMs, endMs }],
-        intervalSeconds: 1,
-        detectSceneChanges: false,
-        deduplicateFrames: true,
-      },
-      async (items) => {
-        const frames: SubtitleVisionFrame[] = [];
-        for (let index = 0; index < items.length; index += 1) {
-          const bytes = await readFile(items[index].path);
-          frames.push({
-            id: `cue-${cue.id}-${index}`,
-            timestampMs: items[index].timeMs,
-            imageDataUrl: `data:image/jpeg;base64,${bytes.toString("base64")}`,
-            fingerprint: createHash("sha256").update(bytes).digest("hex"),
-            videoFingerprint,
-            videoDurationMs: durationMs,
-            contextRevision,
-            segmentType: "MAIN",
-            context: {
-              projectName: project.name,
-              title: project.aiStoryContext.topic,
-              description:
-                `${project.aiStoryContext.storySummary ?? ""}\nUser correction: ${request.instruction}`.trim(),
-              previousSubtitle: cue.text,
-            },
-          });
-        }
-        const result = await runSubtitleVisionDrafts(
-          frames,
-          provider,
-          new DiskSubtitleVisionCache(path.join(app.getPath("userData"), "cache", "subtitle-vision", project.id)),
-          { density: "STANDARD", language: request.displayLanguage },
-        );
-        drafts.push(...result.drafts);
-      },
-    );
-    if (!drafts.length) throw new Error("附近畫面沒有產生可用字幕建議。");
-    const text = drafts
-      .map((draft) => draft.text.trim())
-      .filter(Boolean)
-      .join(" ")
-      .slice(0, 120);
-    return {
-      text,
-      confidence: Math.min(...drafts.map((draft) => draft.confidence)),
-      warning: drafts.find((draft) => draft.warning)?.warning,
-    };
-    }));
+      const project = store.getProject();
+      const cue = project.subtitleCues.find((item) => item.id === request.cueId);
+      if (!cue || cue.origin !== "AI_VISUAL" || cue.reviewStatus !== "DRAFT")
+        throw new Error("只能重新產生待確認的畫面 AI 草稿。");
+      const selected = await currentSubtitleVideoSelection();
+      if (!selected.path) throw new Error("找不到可分析的成功 Final Output。");
+      const combined = buildTimelinePlan(project, { includeIntro: project.introSegments.length > 0 });
+      const origin =
+        cue.timelineScope === "INTRO"
+          ? (combined.clips.find((clip) => clip.scope === "INTRO")?.outputStartMs ?? 0)
+          : (combined.clips.find((clip) => clip.scope === "MAIN")?.outputStartMs ?? 0);
+      const media = await subtitleVideoProbe.probe(selected.path);
+      const durationMs = media.durationMs ?? 0;
+      const compatibility = subtitleTimelineCompatibility(combined.durationMs, durationMs);
+      if (!compatibility.compatible || selected.reason !== "PROJECT_CONCAT")
+        throw new Error("只有帶目前 projectId 的成功輸出可更新專案字幕；請改用獨立草稿。");
+      const center = origin + Math.round((cue.startMs + cue.endMs) / 2);
+      const startMs = Math.max(0, center - 1_000);
+      const endMs = Math.min(durationMs, center + 1_001);
+      const { provider } = await subtitleProvider(request.provider);
+      const file = await stat(selected.path);
+      const videoFingerprint = createHash("sha256")
+        .update(`${selected.path}\0${file.size}\0${file.mtimeMs}`)
+        .digest("hex");
+      const contextRevision = createHash("sha256")
+        .update(JSON.stringify([cue.id, cue.startMs, cue.endMs, request.instruction, request.displayLanguage]))
+        .digest("hex");
+      const drafts: import("./services/subtitle-vision-orchestrator").SubtitleVisionDraft[] = [];
+      await subtitleFrameExtractor.extractBatches(
+        {
+          projectId: project.id,
+          sourcePath: selected.path,
+          cacheRoot: path.join(app.getPath("userData"), "cache"),
+          segments: [{ type: "MAIN", startMs, endMs }],
+          intervalSeconds: 1,
+          detectSceneChanges: false,
+          deduplicateFrames: true,
+        },
+        async (items) => {
+          const frames: SubtitleVisionFrame[] = [];
+          for (let index = 0; index < items.length; index += 1) {
+            const bytes = await readFile(items[index].path);
+            frames.push({
+              id: `cue-${cue.id}-${index}`,
+              timestampMs: items[index].timeMs,
+              imageDataUrl: `data:image/jpeg;base64,${bytes.toString("base64")}`,
+              fingerprint: createHash("sha256").update(bytes).digest("hex"),
+              videoFingerprint,
+              videoDurationMs: durationMs,
+              contextRevision,
+              segmentType: "MAIN",
+              context: {
+                projectName: project.name,
+                title: project.aiStoryContext.topic,
+                description:
+                  `${project.aiStoryContext.storySummary ?? ""}\nUser correction: ${request.instruction}`.trim(),
+                previousSubtitle: cue.text,
+              },
+            });
+          }
+          const result = await runSubtitleVisionDrafts(
+            frames,
+            provider,
+            new DiskSubtitleVisionCache(path.join(app.getPath("userData"), "cache", "subtitle-vision", project.id)),
+            { density: "STANDARD", language: request.displayLanguage },
+          );
+          drafts.push(...result.drafts);
+        },
+      );
+      if (!drafts.length) throw new Error("附近畫面沒有產生可用字幕建議。");
+      const text = drafts
+        .map((draft) => draft.text.trim())
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 120);
+      return {
+        text,
+        confidence: Math.min(...drafts.map((draft) => draft.confidence)),
+        warning: drafts.find((draft) => draft.warning)?.warning,
+      };
+    }),
+  );
   ipcMain.handle("subtitle:ai-generate", async (event, options: AiSubtitleGenerationOptions) => {
     if (aiSubtitleController) throw new Error("AI 字幕分析已在進行中。");
     const controller = new AbortController();
