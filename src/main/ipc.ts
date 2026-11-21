@@ -1724,7 +1724,7 @@ export function registerIpc(
     };
   };
   ipcMain.handle("subtitle:visual-preflight", (_event, options: SubtitleVisualAnalysisOptions) =>
-    subtitlePreflight(options),
+    withProjectOperation(() => subtitlePreflight(options)),
   );
   const ownedSubtitleWorkspace = async (id: string) => {
     const workspace = await standaloneSubtitles.get(id, false);
@@ -1733,7 +1733,9 @@ export function registerIpc(
     workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return workspace;
   };
-  ipcMain.handle("subtitle:workspace:get", () => standaloneSubtitles.latest(store.getProject().id));
+  ipcMain.handle("subtitle:workspace:get", () =>
+    withProjectOperation(() => standaloneSubtitles.latest(store.getProject().id)),
+  );
   ipcMain.handle("subtitle:workspace:import-srt", (event) =>
     withProjectOperation(async () => {
       const selectedProjectId = store.getProject().id;
@@ -1860,7 +1862,7 @@ export function registerIpc(
     return job;
   };
   ipcMain.handle("subtitle:workspace:frame", (_event, id: string, timestampMs: number) =>
-    subtitleEvidenceFrame(id, timestampMs),
+    withProjectOperation(() => subtitleEvidenceFrame(id, timestampMs)),
   );
 
   const publishSubtitleAiCheckProgress = (event: Electron.IpcMainInvokeEvent, progress: SubtitleAiCheckProgress) => {
@@ -2112,7 +2114,7 @@ export function registerIpc(
     );
     return task;
   };
-  ipcMain.handle("subtitle:ai-check:get", () => subtitleAiCheckJobs.load());
+  ipcMain.handle("subtitle:ai-check:get", () => withProjectOperation(() => subtitleAiCheckJobs.load()));
   ipcMain.handle("subtitle:ai-check:start", (event, request: SubtitleAiCheckRequest) =>
     withProjectOperation(() => launchSubtitleAiCheck(event, request)),
   );
