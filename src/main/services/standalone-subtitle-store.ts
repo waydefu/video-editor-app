@@ -64,6 +64,11 @@ export class StandaloneSubtitleStore {
       if (projectId && (workspace.ownerProjectId ?? workspace.sourceProjectId) !== projectId) return null;
       return workspace;
     } catch {
+      if (projectId) {
+        // Safely expose pre-migration *project-linked* drafts, never arbitrary global VIDEO_FIRST drafts.
+        const legacy = await this.latest();
+        return legacy?.sourceProjectId === projectId ? legacy : null;
+      }
       return null;
     }
   }
