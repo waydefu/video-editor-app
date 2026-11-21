@@ -13,6 +13,10 @@ export function authorizeSubtitleVideo(videoPath: string): string {
 export function resolveSubtitleVideo(id: string): string | undefined {
   return allowedVideos.get(id);
 }
+/** Revoke source-media URLs from the previously active project. */
+export function clearAuthorizedSubtitleVideos(): void {
+  allowedVideos.clear();
+}
 
 export class StandaloneSubtitleStore {
   constructor(private readonly root: string) {}
