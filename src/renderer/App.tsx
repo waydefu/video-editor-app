@@ -158,6 +158,7 @@ export function App() {
   const [materialEditorAsset, setMaterialEditorAsset] = useState<SourceAsset>();
   const [materialEditorSection, setMaterialEditorSection] = useState<MaterialEditorSection>("CLIP");
   const [activeWorkspace, setActiveWorkspace] = useState<MainWorkspace>("SOURCES");
+  const activeProjectIdRef = useRef<string | undefined>(undefined);
   const draggingAssetIdRef = useRef<string | undefined>(undefined);
   const dragOrderRef = useRef<string[]>([]);
   const dragOriginIndexRef = useRef<number | undefined>(undefined);
@@ -199,8 +200,12 @@ export function App() {
       window.sourceApp.getUserPreferences(),
     ])
       .then(([restored, fileState, info, preferences]) => {
-        setProject(restored);
-        setProjectFilePath(fileState.filePath);
+        // Ignore a stale initial snapshot if a project-change event arrived first.
+        if (!activeProjectIdRef.current || activeProjectIdRef.current === restored.id) {
+          activeProjectIdRef.current = restored.id;
+          setProject(restored);
+          setProjectFilePath(fileState.filePath);
+        }
         setAppInfo(info);
         setViewMode(preferences.viewMode);
         setRenderDefaults(preferences.renderDefaults);
@@ -224,20 +229,20 @@ export function App() {
   useEffect(() => {
     if (!window.sourceApp.onProjectChanged) return;
     window.sourceApp.onProjectChanged((change) => {
-      setProject((current) => {
-        if (!current || current.id !== change.projectId) {
-          setSelectedAsset(undefined);
-          setShowPlaylist(false);
-          setShowConcatRender(false);
-          setShowIntroStudio(false);
-          setShowBgm(false);
-          setShowSubtitles(false);
-          setShowWatermarkSettings(false);
-          setMaterialAnalysisAsset(undefined);
-        }
-        return structuredClone(change.project);
-      });
-      if (change.filePath !== undefined) setProjectFilePath(change.filePath);
+      if (activeProjectIdRef.current !== change.projectId) {
+        activeProjectIdRef.current = change.projectId;
+        closeProjectViews();
+        setActiveWorkspace("SOURCES");
+        setShowFileMenu(false);
+        setShowCloseConfirmation(false);
+        setDraggingAssetId(undefined);
+        setDragTargetAssetId(undefined);
+        draggingAssetIdRef.current = undefined;
+        dragOrderRef.current = [];
+        dragOriginIndexRef.current = undefined;
+      }
+      setProject(structuredClone(change.project));
+      setProjectFilePath(change.filePath);
       setSaveState("SAVED");
       setSavedAt(change.updatedAt);
       setNotice(`專案「${change.project.name}」已同步保存（${change.changedSections.join("、")}）。`);
@@ -418,6 +423,9 @@ export function App() {
     setShowOutputHistory(false);
     setShowAiPublish(false);
     setShowWatermarkSettings(false);
+    setMaterialEditorAsset(undefined);
+    setShowFileMenu(false);
+    setExternalOpeningId(undefined);
   };
   const openWorkspace = (workspace: MainWorkspace) => {
     closeProjectViews();
