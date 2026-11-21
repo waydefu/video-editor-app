@@ -113,7 +113,10 @@ describe("render disk reliability", () => {
 
   it("recognizes Windows/FFmpeg ENOSPC variants and keeps the advisory reserve small", () => {
     expect(isEnospcError(new Error("Task finished with error code: -28 (No space left on device)"))).toBe(true);
-    expect(isEnospcError(new Error("Error muxing a packet; Error writing trailer"))).toBe(true);
+    expect(isEnospcError(new Error("Error muxing a packet; Error writing trailer"))).toBe(false);
+    expect(isEnospcError(new Error("Error closing file: Invalid argument"))).toBe(false);
+    expect(isEnospcError(new Error("FFmpeg reported errno=-28 while writing trailer"))).toBe(true);
+    expect(isEnospcError(Object.assign(new Error("io failed"), { code: "ENOSPC" }))).toBe(true);
     expect(isEnospcError(new Error("Cannot allocate memory"))).toBe(false);
     expect(safetyReserveBytes(10 * GIB)).toBe(1 * GIB);
     expect(safetyReserveBytes(200 * GIB)).toBe(1 * GIB);
