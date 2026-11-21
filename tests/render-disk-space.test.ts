@@ -30,6 +30,25 @@ describe("render disk reliability", () => {
     expect(remainingReservedWriteBytes(estimated, 2 * GIB, 50 * GIB)).toBe(0);
   });
 
+  it("uses independent soft reserves for TEMP and cross-volume final output", async () => {
+    const monitor = new RenderDiskMonitor({
+      tempRoot: "D:\\RenderTemp",
+      outputPath: "C:\\Exports\\final.mp4",
+      tempLocations: [
+        { id: "primary", path: "D:\\RenderTemp", role: "PRIMARY", enabled: true, reserveBytes: 6 * GIB },
+      ],
+      estimatedRemainingWriteBytes: () => 0,
+      estimatedFinalOutputBytes: 0,
+      diskSpaceForMonitoring: async () => ({ freeBytes: 5 * GIB, capacityBytes: 500 * GIB }),
+    });
+    const snapshot = await monitor.snapshot("TEST");
+    const primary = snapshot.volumes?.find((item) => item.role === "PRIMARY");
+    const output = snapshot.volumes?.find((item) => item.role === "FINAL_OUTPUT");
+    expect(primary?.reserveBytes).toBe(6 * GIB);
+    expect(output?.reserveBytes).toBe(2 * GIB);
+    expect(output?.pressureLevel).toBe("OK");
+  });
+
   it("reports an offline inactive primary without throwing", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "render-monitor-offline-"));
     try {
