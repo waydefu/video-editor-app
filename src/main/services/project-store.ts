@@ -626,7 +626,14 @@ export class ProjectStore {
     const name = projectName.trim();
     if (!name) throw new Error("專案名稱不可空白。");
     const project = await this.queueProjectFileOperation(async () => {
-      const next = { ...clone(this.current), name, updatedAt: new Date().toISOString() };
+      // Saving to a different path forks the project: output/resume and subtitle keys must not collide.
+      const fork = this.activeProjectPath !== undefined && path.resolve(this.activeProjectPath) !== resolved;
+      const next = {
+        ...clone(this.current),
+        ...(fork ? { id: randomUUID(), createdAt: new Date().toISOString() } : {}),
+        name,
+        updatedAt: new Date().toISOString(),
+      };
       await this.persistProject(next, resolved);
       await this.writeSessionPointer(resolved);
       const previous = this.getProject();
