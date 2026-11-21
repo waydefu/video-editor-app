@@ -10,7 +10,7 @@ import path from "node:path";
 import type { SubtitlePreviewService } from "./subtitle-preview";
 import type { OutputHistoryStore } from "./output-history";
 import type { AudioPreviewService } from "./audio-preview";
-import { resolveSubtitleVideo } from "./standalone-subtitle-store";
+import { clearAuthorizedSubtitleVideos, resolveSubtitleVideo } from "./standalone-subtitle-store";
 
 const VARIANTS: Record<string, PreviewVariant> = {
   thumbnail: "THUMBNAIL",
@@ -74,6 +74,13 @@ export function registerPreviewProtocol(
   outputHistory?: OutputHistoryStore,
   audioPreviews?: AudioPreviewService,
 ): void {
+  let activeProjectId = store.getProject().id;
+  store.subscribe((event) => {
+    if (event.projectId !== activeProjectId) {
+      activeProjectId = event.projectId;
+      clearAuthorizedSubtitleVideos();
+    }
+  });
   protocol.handle("preview-media", async (request) => {
     try {
       const url = new URL(request.url);
