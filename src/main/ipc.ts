@@ -1627,15 +1627,17 @@ export function registerIpc(
       isManualPathValid: (candidate) => path.isAbsolute(candidate),
     });
   };
-  ipcMain.handle("subtitle:analysis-video:get", async () => {
-    const result = await describeSubtitleVideo(await currentSubtitleVideoSelection());
-    subtitleLog("SUBTITLE_UI", {
-      projectId: store.getProject().id,
-      videoPath: "outputPath" in result ? result.outputPath : undefined,
-      loadedProjectCues: store.getProject().subtitleCues.length,
-    });
-    return result;
-  });
+  ipcMain.handle("subtitle:analysis-video:get", () =>
+    withProjectOperation(async () => {
+      const result = await describeSubtitleVideo(await currentSubtitleVideoSelection());
+      subtitleLog("SUBTITLE_UI", {
+        projectId: store.getProject().id,
+        videoPath: "outputPath" in result ? result.outputPath : undefined,
+        loadedProjectCues: store.getProject().subtitleCues.length,
+      });
+      return result;
+    }),
+  );
   ipcMain.handle("subtitle:analysis-video:choose", (event) =>
     withProjectOperation(async () => {
       const selectedProjectId = store.getProject().id;
