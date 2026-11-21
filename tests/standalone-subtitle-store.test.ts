@@ -115,8 +115,9 @@ describe("standalone subtitle drafts", () => {
       const corrupted = JSON.parse(await readFile(manifestPath, "utf8")) as typeof saved;
       corrupted.draftPath = protectedFile;
       await writeFile(manifestPath, JSON.stringify(corrupted));
-      await expect(service.save(saved.id, [{ id: "cue", startMs: 0, endMs: 500, text: "overwrite" }]))
-        .rejects.toThrow(/路徑與工作區不一致/);
+      await expect(service.save(saved.id, [{ id: "cue", startMs: 0, endMs: 500, text: "overwrite" }])).rejects.toThrow(
+        /路徑與工作區不一致/,
+      );
       expect(await readFile(protectedFile, "utf8")).toBe("original-private-data");
     } finally {
       await rm(root, { recursive: true, force: true });
