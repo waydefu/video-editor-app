@@ -2455,7 +2455,7 @@ export function registerIpc(
       });
       const workspace =
         writeMode === "VIDEO_FIRST"
-          ? await standaloneSubtitles.create(selected.path, videoFingerprint, durationMs, cues)
+          ? await standaloneSubtitles.create(selected.path, videoFingerprint, durationMs, cues, undefined, project.id)
           : undefined;
       subtitleLog("SUBTITLE", { mode: writeMode, draftGenerated: cues.length, workspaceId: workspace?.id });
       if (writeMode === "PROJECT_AWARE")
@@ -2494,7 +2494,7 @@ export function registerIpc(
     }
   };
   ipcMain.handle("subtitle:visual-job:start", (event, options: SubtitleVisualAnalysisOptions) =>
-    runSubtitleVisualJob(event, options),
+    withProjectOperation(() => runSubtitleVisualJob(event, options)),
   );
   ipcMain.handle("subtitle:visual-job:pause", async () => {
     subtitleVisualPaused = true;
@@ -2505,7 +2505,8 @@ export function registerIpc(
     subtitleVisualController?.abort();
     if (subtitleVisualLastOptions) await saveSubtitleVisualCheckpoint(subtitleVisualLastOptions, "CANCELLED");
   });
-  ipcMain.handle("subtitle:visual-job:resume", async (event) => {
+  ipcMain.handle("subtitle:visual-job:resume", (event) =>
+    withProjectOperation(async () => {
     const saved = JSON.parse(await readFile(subtitleVisualCheckpointPath(), "utf8")) as {
       projectId: string;
       options: SubtitleVisualAnalysisOptions;
@@ -2524,8 +2525,9 @@ export function registerIpc(
       subtitleVisualLastOptions = saved.options;
     }
     return runSubtitleVisualJob(event, subtitleVisualLastOptions);
-  });
-  ipcMain.handle("subtitle:visual-cue:regenerate", async (_event, request: SubtitleVisualCueRegenerateRequest) => {
+    }));
+  ipcMain.handle("subtitle:visual-cue:regenerate", (_event, request: SubtitleVisualCueRegenerateRequest) =>
+    withProjectOperation(async () => {
     const project = store.getProject();
     const cue = project.subtitleCues.find((item) => item.id === request.cueId);
     if (!cue || cue.origin !== "AI_VISUAL" || cue.reviewStatus !== "DRAFT")
@@ -2540,8 +2542,8 @@ export function registerIpc(
     const media = await subtitleVideoProbe.probe(selected.path);
     const durationMs = media.durationMs ?? 0;
     const compatibility = subtitleTimelineCompatibility(combined.durationMs, durationMs);
-    if (!compatibility.compatible || selected.reason === "MANUAL_PATH")
-      throw new Error("此影片不適合直接修改專案字幕；請用影片時間軸分析建立獨立草稿。");
+    if (!compatibility.compatible || selected.reason !== "PROJECT_CONCAT")
+      throw new Error("只有帶目前 projectId 的成功輸出可更新專案字幕；請改用獨立草稿。");
     const center = origin + Math.round((cue.startMs + cue.endMs) / 2);
     const startMs = Math.max(0, center - 1_000);
     const endMs = Math.min(durationMs, center + 1_001);
@@ -2606,7 +2608,7 @@ export function registerIpc(
       confidence: Math.min(...drafts.map((draft) => draft.confidence)),
       warning: drafts.find((draft) => draft.warning)?.warning,
     };
-  });
+    }));
   ipcMain.handle("subtitle:ai-generate", async (event, options: AiSubtitleGenerationOptions) => {
     if (aiSubtitleController) throw new Error("AI 字幕分析已在進行中。");
     const controller = new AbortController();
