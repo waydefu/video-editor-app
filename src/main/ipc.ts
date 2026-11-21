@@ -1727,9 +1727,10 @@ export function registerIpc(
     subtitlePreflight(options),
   );
   const ownedSubtitleWorkspace = async (id: string) => {
-    const workspace = await standaloneSubtitles.get(id);
+    const workspace = await standaloneSubtitles.get(id, false);
     if ((workspace.ownerProjectId ?? workspace.sourceProjectId) !== store.getProject().id)
       throw new Error("此字幕工作區不屬於目前專案；請切回原專案。");
+    workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return workspace;
   };
   ipcMain.handle("subtitle:workspace:get", () => standaloneSubtitles.latest(store.getProject().id));
