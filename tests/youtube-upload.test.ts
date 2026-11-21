@@ -186,4 +186,86 @@ describe("secure YouTube preview upload", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+  it("resends unacknowledged bytes after a 308 without Range and resumes partial chunks exactly", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "youtube-resume-range-"));
+    roots.push(root);
+    const oauthPath = path.join(root, "oauth.json");
+    await writeFile(oauthPath, JSON.stringify({
+      installed: { client_id: "12345678.apps.googleusercontent.com", client_secret: "secret-value" },
+    }));
+    const settings = new YoutubeSettingsStore(root, protector, browsers);
+    await settings.initialize();
+    await settings.importOAuthClient(oauthPath);
+    await settings.saveConnection("refresh", "channel-1", "漫步風光");
+    const filePath = path.join(root, "clip.mp4");
+    await writeFile(filePath, Buffer.alloc(1024, 9));
+    const transmitted: string[] = [];
+    const mockFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com/token"))
+        return new Response(JSON.stringify({ access_token: "token" }), { status: 200 });
+      if (url.includes("uploadType=resumable"))
+        return new Response(null, {
+          status: 200,
+          headers: { location: "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=resume-test" },
+        });
+      transmitted.push((init?.headers as Record<string, string>)["content-range"]);
+      if (transmitted.length === 1) return new Response(null, { status: 308 });
+      if (transmitted.length === 2)
+        return new Response(null, { status: 308, headers: { range: "bytes=0-99" } });
+      return new Response(JSON.stringify({ id: "abc12345XYZ" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const upload = new YoutubeUploadService(settings, browsers, mockFetch, async () => undefined);
+    const result = await upload.upload(filePath, {
+      jobId: "resume-job",
+      title: "完整續傳測試",
+      description: "",
+      privacyStatus: "unlisted",
+      madeForKids: false,
+    });
+    expect(result.videoId).toBe("abc12345XYZ");
+    expect(transmitted).toEqual([
+      "bytes 0-1023/1024",
+      "bytes 0-1023/1024",
+      "bytes 100-1023/1024",
+    ]);
+  });
+
+  it("stops safely after five 308 responses with no acknowledged bytes", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "youtube-resume-stall-"));
+    roots.push(root);
+    const oauthPath = path.join(root, "oauth.json");
+    await writeFile(oauthPath, JSON.stringify({
+      installed: { client_id: "12345678.apps.googleusercontent.com", client_secret: "secret-value" },
+    }));
+    const settings = new YoutubeSettingsStore(root, protector, browsers);
+    await settings.initialize();
+    await settings.importOAuthClient(oauthPath);
+    await settings.saveConnection("refresh", "channel-1", "漫步風光");
+    const filePath = path.join(root, "clip.mp4");
+    await writeFile(filePath, Buffer.alloc(1024, 9));
+    let uploads = 0;
+    const mockFetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com/token"))
+        return new Response(JSON.stringify({ access_token: "token" }), { status: 200 });
+      if (url.includes("uploadType=resumable"))
+        return new Response(null, {
+          status: 200,
+          headers: { location: "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=stall-test" },
+        });
+      uploads += 1;
+      return new Response(null, { status: 308 });
+    }) as unknown as typeof fetch;
+    const upload = new YoutubeUploadService(settings, browsers, mockFetch, async () => undefined);
+    await expect(upload.upload(filePath, {
+      jobId: "stall-job",
+      title: "重試上限測試",
+      description: "",
+      privacyStatus: "unlisted",
+      madeForKids: false,
+    })).rejects.toThrow(/多次未確認/);
+    expect(uploads).toBe(5);
+  });
+
 });
