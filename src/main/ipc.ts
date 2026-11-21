@@ -1614,7 +1614,7 @@ export function registerIpc(
     const history = await outputHistory.snapshot();
     return selectSubtitleVideoSource(history.outputs, {
       projectId: store.getProject().id,
-      projectName: store.getProject().name,
+      // Legacy title-only output is not enough to prove that a video belongs to this project.
       lastManualPath: await persistedManualSubtitlePath(),
       isManualPathValid: (candidate) => path.isAbsolute(candidate),
     });
