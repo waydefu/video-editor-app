@@ -1,0 +1,28 @@
+name: Temporary documentation formatter
+on:
+  push:
+    branches: [fix/v088-project-isolation-20261121]
+    paths: [.github/workflows/temporary-format-doc.yml]
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npx prettier --write docs/DEEP_AUDIT_2026-11-22.md
+      - name: Commit formatted report
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/DEEP_AUDIT_2026-11-22.md
+          if ! git diff --cached --quiet; then
+            git commit -m "style: format deep audit report"
+            git push origin HEAD:refs/heads/fix/v088-project-isolation-20261121
+          fi
