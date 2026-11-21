@@ -24,6 +24,9 @@ export class StandaloneSubtitleStore {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("獨立字幕工作區識別碼無效。");
     return path.join(this.root, id, "workspace.json");
   }
+  private draftPath(id: string, videoPath: string): string {
+    return path.join(this.root, id, `${path.parse(videoPath).name}.ai-draft.srt`);
+  }
   async create(
     videoPath: string,
     videoFingerprint: string,
@@ -41,7 +44,7 @@ export class StandaloneSubtitleStore {
       videoFingerprint,
       videoDurationMs,
       cues,
-      draftPath: path.join(this.root, id, `${path.parse(videoPath).name}.ai-draft.srt`),
+      draftPath: this.draftPath(id, videoPath),
       updatedAt: new Date().toISOString(),
       ownerProjectId: source?.projectId ?? ownerProjectId,
       sourceProjectId: source?.projectId,
@@ -52,6 +55,14 @@ export class StandaloneSubtitleStore {
   async get(id: string, authorizePreview = true): Promise<StandaloneSubtitleWorkspace> {
     const workspace = JSON.parse(await readFile(this.workspacePath(id), "utf8")) as StandaloneSubtitleWorkspace;
     if (workspace.id !== id || !Array.isArray(workspace.cues)) throw new Error("獨立字幕工作區格式無效。");
+    // The persisted draft path is untrusted; never let a modified workspace
+    // turn a subtitle save into an arbitrary filesystem overwrite.
+    if (
+      typeof workspace.videoPath !== "string" ||
+      typeof workspace.draftPath !== "string" ||
+      path.resolve(workspace.draftPath) !== path.resolve(this.draftPath(id, workspace.videoPath))
+    )
+      throw new Error("字幕草稿儲存路徑與工作區不一致，已拒絕寫入。");
     if (authorizePreview) workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return workspace;
   }
