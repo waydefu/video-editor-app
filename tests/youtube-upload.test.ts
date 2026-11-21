@@ -252,9 +252,12 @@ describe("secure YouTube preview upload", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "youtube-finalize-308-"));
     roots.push(root);
     const oauthPath = path.join(root, "oauth.json");
-    await writeFile(oauthPath, JSON.stringify({
-      installed: { client_id: "12345678.apps.googleusercontent.com", client_secret: "secret-value" },
-    }));
+    await writeFile(
+      oauthPath,
+      JSON.stringify({
+        installed: { client_id: "12345678.apps.googleusercontent.com", client_secret: "secret-value" },
+      }),
+    );
     const settings = new YoutubeSettingsStore(root, protector, browsers);
     await settings.initialize();
     await settings.importOAuthClient(oauthPath);
@@ -276,13 +279,16 @@ describe("secure YouTube preview upload", () => {
         ? new Response(null, { status: 308, headers: { range: "bytes=0-1023" } })
         : new Response(JSON.stringify({ id: "finalized123" }), { status: 200 });
     }) as unknown as typeof fetch;
-    const result = await new YoutubeUploadService(settings, browsers, mockFetch, async () => undefined).upload(filePath, {
-      jobId: "finalize-job",
-      title: "完成後驗證",
-      description: "",
-      privacyStatus: "unlisted",
-      madeForKids: false,
-    });
+    const result = await new YoutubeUploadService(settings, browsers, mockFetch, async () => undefined).upload(
+      filePath,
+      {
+        jobId: "finalize-job",
+        title: "完成後驗證",
+        description: "",
+        privacyStatus: "unlisted",
+        madeForKids: false,
+      },
+    );
     expect(result.videoId).toBe("finalized123");
     expect(ranges).toEqual(["bytes 0-1023/1024", "bytes */1024"]);
   });
