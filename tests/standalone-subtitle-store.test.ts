@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -59,6 +60,42 @@ describe("standalone subtitle drafts", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("never authorizes another project's video when a pointer is corrupt", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-forged-pointer-"));
+    try {
+      const workspaces = path.join(root, "workspaces");
+      const store = new StandaloneSubtitleStore(workspaces);
+      const foreignVideo = path.join(root, "foreign.mp4");
+      await store.create(
+        path.join(root, "local.mp4"),
+        "fingerprint-a",
+        1000,
+        [{ id: "a", startMs: 0, endMs: 500, text: "A" }],
+        undefined,
+        "project-a",
+      );
+      const foreign = await store.create(
+        foreignVideo,
+        "fingerprint-b",
+        1000,
+        [{ id: "b", startMs: 0, endMs: 500, text: "B" }],
+        undefined,
+        "project-b",
+      );
+      const key = createHash("sha256").update("project-a").digest("hex");
+      await writeFile(path.join(workspaces, "latest-by-project", `${key}.json`), JSON.stringify({ id: foreign.id }));
+      clearAuthorizedSubtitleVideos();
+      expect(await store.latest("project-a")).toBeNull();
+      const foreignVideoId = createHash("sha256").update(path.resolve(foreignVideo)).digest("hex");
+      expect(resolveSubtitleVideo(foreignVideoId)).toBeUndefined();
+      expect((await store.latest("project-b"))?.id).toBe(foreign.id);
+      expect(resolveSubtitleVideo(foreignVideoId)).toBe(path.resolve(foreignVideo));
+    } finally {
+      clearAuthorizedSubtitleVideos();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps per-project drafts isolated and preserves older same-video revisions", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-scope-"));
     try {
