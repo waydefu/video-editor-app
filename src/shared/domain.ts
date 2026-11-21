@@ -1016,6 +1016,8 @@ export interface StandaloneSubtitleWorkspace {
   draftPath: string;
   cues: SubtitleCue[];
   updatedAt: string;
+  /** Owner of the draft, independent of whether it can be written back to that project. */
+  ownerProjectId?: string;
   /** Present only when the video is a verified output of this exact project revision. */
   sourceProjectId?: string;
   sourceTimelineRevision?: number;
