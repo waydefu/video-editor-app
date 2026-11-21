@@ -96,6 +96,33 @@ describe("standalone subtitle drafts", () => {
     }
   });
 
+  it("rejects a modified workspace that redirects subtitle saves outside its own directory", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-path-guard-"));
+    try {
+      const workspaces = path.join(root, "workspaces");
+      const service = new StandaloneSubtitleStore(workspaces);
+      const protectedFile = path.join(root, "private.txt");
+      await writeFile(protectedFile, "original-private-data");
+      const saved = await service.create(
+        path.join(root, "video.mp4"),
+        "fingerprint",
+        1000,
+        [{ id: "cue", startMs: 0, endMs: 500, text: "safe" }],
+        undefined,
+        "project-a",
+      );
+      const manifestPath = path.join(workspaces, saved.id, "workspace.json");
+      const corrupted = JSON.parse(await readFile(manifestPath, "utf8")) as typeof saved;
+      corrupted.draftPath = protectedFile;
+      await writeFile(manifestPath, JSON.stringify(corrupted));
+      await expect(service.save(saved.id, [{ id: "cue", startMs: 0, endMs: 500, text: "overwrite" }]))
+        .rejects.toThrow(/路徑與工作區不一致/);
+      expect(await readFile(protectedFile, "utf8")).toBe("original-private-data");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps per-project drafts isolated and preserves older same-video revisions", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-scope-"));
     try {
