@@ -411,6 +411,7 @@ export class RenderDiskMonitor {
       );
     };
     const reserve = configuredReserve(this.options.tempRoot, "primary");
+    const outputReserve = shared ? reserve : configuredReserve(this.options.outputPath);
     const tempLevel = diskPressureLevel(
       tempDisk.freeBytes,
       (shared ? remaining : tempRemaining) + hardSafetyLimitBytes(this.options.tempRoot),
@@ -419,14 +420,14 @@ export class RenderDiskMonitor {
     const outputLevel = diskPressureLevel(
       outputDisk.freeBytes,
       (shared ? remaining : outputRemaining) + hardSafetyLimitBytes(this.options.outputPath),
-      reserve,
+      outputReserve,
     );
     const rank: Record<RenderDiskPressureLevel, number> = { OK: 0, WARNING: 1, CRITICAL: 2, EMERGENCY: 3 };
     let level = rank[tempLevel] >= rank[outputLevel] ? tempLevel : outputLevel;
     const requiredAdditionalBytes = Math.max(
       0,
       (shared ? remaining : tempRemaining) + reserve - tempDisk.freeBytes,
-      (shared ? remaining : outputRemaining) + reserve - outputDisk.freeBytes,
+      (shared ? remaining : outputRemaining) + outputReserve - outputDisk.freeBytes,
     );
     const reservationGroups = new Map<
       string,
@@ -549,8 +550,8 @@ export class RenderDiskMonitor {
                 capacityBytes: outputDisk.capacityBytes,
                 currentBytes: finalOutputBytes,
                 estimatedRemainingWriteBytes: outputRemaining,
-                reserveBytes: reserve,
-                requiredAdditionalBytes: Math.max(0, outputRemaining + reserve - outputDisk.freeBytes),
+                reserveBytes: outputReserve,
+                requiredAdditionalBytes: Math.max(0, outputRemaining + outputReserve - outputDisk.freeBytes),
                 pressureLevel: outputLevel,
                 activeJobCount: 0,
                 availableForNextJob: false,
