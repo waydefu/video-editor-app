@@ -2,8 +2,21 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { StandaloneSubtitleStore } from "../src/main/services/standalone-subtitle-store";
+import {
+  StandaloneSubtitleStore,
+  authorizeSubtitleVideo,
+  resolveSubtitleVideo,
+  clearAuthorizedSubtitleVideos,
+} from "../src/main/services/standalone-subtitle-store";
 describe("standalone subtitle drafts", () => {
+  it("revokes old source-media links after a project switch", () => {
+    const url = authorizeSubtitleVideo("C:\\Videos\\old.mp4");
+    const id = url.split("/").at(-1)!;
+    expect(resolveSubtitleVideo(id)).toBeDefined();
+    clearAuthorizedSubtitleVideos();
+    expect(resolveSubtitleVideo(id)).toBeUndefined();
+  });
+
   it("persists separately and leaves existing source and SRT untouched", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-v087-"));
     try {
