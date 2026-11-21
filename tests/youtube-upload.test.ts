@@ -248,6 +248,45 @@ describe("secure YouTube preview upload", () => {
     expect(transmitted).toEqual(["bytes 0-1023/1024", "bytes 0-1023/1024", "bytes 100-1023/1024"]);
   });
 
+  it("queries the resumable session when the last chunk receives 308 with all bytes acknowledged", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "youtube-finalize-308-"));
+    roots.push(root);
+    const oauthPath = path.join(root, "oauth.json");
+    await writeFile(oauthPath, JSON.stringify({
+      installed: { client_id: "12345678.apps.googleusercontent.com", client_secret: "secret-value" },
+    }));
+    const settings = new YoutubeSettingsStore(root, protector, browsers);
+    await settings.initialize();
+    await settings.importOAuthClient(oauthPath);
+    await settings.saveConnection("refresh", "channel-1", "漫步風光");
+    const filePath = path.join(root, "clip.mp4");
+    await writeFile(filePath, Buffer.alloc(1024, 9));
+    const ranges: string[] = [];
+    const mockFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com/token"))
+        return new Response(JSON.stringify({ access_token: "token" }), { status: 200 });
+      if (url.includes("uploadType=resumable"))
+        return new Response(null, {
+          status: 200,
+          headers: { location: "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=finalize-test" },
+        });
+      ranges.push((init?.headers as Record<string, string>)["content-range"]);
+      return ranges.length === 1
+        ? new Response(null, { status: 308, headers: { range: "bytes=0-1023" } })
+        : new Response(JSON.stringify({ id: "finalized123" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await new YoutubeUploadService(settings, browsers, mockFetch, async () => undefined).upload(filePath, {
+      jobId: "finalize-job",
+      title: "完成後驗證",
+      description: "",
+      privacyStatus: "unlisted",
+      madeForKids: false,
+    });
+    expect(result.videoId).toBe("finalized123");
+    expect(ranges).toEqual(["bytes 0-1023/1024", "bytes */1024"]);
+  });
+
   it("stops safely after five 308 responses with no acknowledged bytes", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "youtube-resume-stall-"));
     roots.push(root);
