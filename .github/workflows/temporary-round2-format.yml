@@ -19,13 +19,13 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: npx prettier --write src/main/services/standalone-subtitle-store.ts src/main/services/remote-control-server.ts src/main/services/project-store.ts src/main/services/youtube-upload.ts src/main/ipc.ts tests/standalone-subtitle-store.test.ts tests/remote-control-server.test.ts tests/project-store.test.ts tests/youtube-upload.test.ts
+      - run: npx prettier --write src/main/services/subtitle-ai-check.ts src/main/services/standalone-subtitle-store.ts src/main/services/remote-control-server.ts src/main/services/project-store.ts src/main/services/youtube-upload.ts src/main/ipc.ts tests/standalone-subtitle-store.test.ts tests/remote-control-server.test.ts tests/project-store.test.ts tests/youtube-upload.test.ts
       - name: Commit formatting only
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/main/services/standalone-subtitle-store.ts src/main/services/remote-control-server.ts src/main/services/project-store.ts src/main/services/youtube-upload.ts src/main/ipc.ts tests/standalone-subtitle-store.test.ts tests/remote-control-server.test.ts tests/project-store.test.ts tests/youtube-upload.test.ts
+          git add src/main/services/subtitle-ai-check.ts src/main/services/standalone-subtitle-store.ts src/main/services/remote-control-server.ts src/main/services/project-store.ts src/main/services/youtube-upload.ts src/main/ipc.ts tests/standalone-subtitle-store.test.ts tests/remote-control-server.test.ts tests/project-store.test.ts tests/youtube-upload.test.ts
           if ! git diff --cached --quiet; then
             git commit -m "style: format round-two reliability fixes"
             git push origin HEAD:refs/heads/fix/v088-project-isolation-20261121
