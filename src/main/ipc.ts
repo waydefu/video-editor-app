@@ -246,11 +246,20 @@ export function registerIpc(
   };
   const subtitleVideoProbe = new MediaProbe();
   const subtitleFrameExtractor = new SubtitleFrameExtractor();
-  const subtitleVisualCheckpointPath = path.join(app.getPath("userData"), "jobs", "subtitle-visual-job.json");
-  const subtitleAiCheckJobs = new SubtitleAiCheckJobStore(
-    path.join(app.getPath("userData"), "jobs", "subtitle-ai-check-job.json"),
-  );
-  const subtitleSourcePreferencePath = path.join(app.getPath("userData"), "settings", "subtitle-analysis-source.json");
+  // New state is project-scoped. Older global files remain untouched for manual recovery.
+  const projectSubtitleKey = (id: string) => createHash("sha256").update(id).digest("hex");
+  const subtitleVisualCheckpointPath = () =>
+    path.join(app.getPath("userData"), "jobs", "subtitle-visual", `${projectSubtitleKey(store.getProject().id)}.json`);
+  const subtitleAiCheckStore = () =>
+    new SubtitleAiCheckJobStore(
+      path.join(app.getPath("userData"), "jobs", "subtitle-ai-check", `${projectSubtitleKey(store.getProject().id)}.json`),
+    );
+  const subtitleAiCheckJobs = {
+    load: () => subtitleAiCheckStore().load(),
+    save: (snapshot: SubtitleAiCheckJobSnapshot) => subtitleAiCheckStore().save(snapshot),
+  };
+  const subtitleSourcePreferencePath = () =>
+    path.join(app.getPath("userData"), "settings", "subtitle-analysis-sources", `${projectSubtitleKey(store.getProject().id)}.json`);
   let voiceInputController: AbortController | undefined;
   let musicSuggestionController: AbortController | undefined;
   let audioPreviewController: AbortController | undefined;
@@ -453,7 +462,16 @@ export function registerIpc(
       outputVolumeCanRender,
     };
   };
+  let lastActiveProjectId = store.getProject().id;
   const unsubscribeProjectChanges = store.subscribe((change) => {
+    if (change.projectId !== lastActiveProjectId) {
+      lastActiveProjectId = change.projectId;
+      lastManualSubtitleVideoPath = undefined;
+      explicitSubtitleVideoPath = undefined;
+      resumedSubtitleSelectionReason = undefined;
+      subtitleVisualLastOptions = undefined;
+      subtitleVisualResumeData = {};
+    }
     renderCommands.setProjectName(change.project.name);
     for (const window of BrowserWindow.getAllWindows())
       if (!window.isDestroyed()) window.webContents.send("project:changed", change);
@@ -489,7 +507,29 @@ export function registerIpc(
     publishBackgroundJobs();
     return id;
   };
+  let activeSubtitleOperations = 0;
+  let projectSwitchInProgress = false;
+  const withProjectOperation = async <T>(operation: () => Promise<T>): Promise<T> => {
+    if (projectSwitchInProgress) throw new Error("專案正在切換，請在載入完成後重試字幕操作。");
+    activeSubtitleOperations += 1;
+    try {
+      return await operation();
+    } finally {
+      activeSubtitleOperations -= 1;
+    }
+  };
   const assertNoRunningProjectJobs = () => {
+    if (
+      activeSubtitleOperations > 0 ||
+      subtitleVisualController ||
+      subtitleAiCheckController ||
+      subtitleAiCheckRunPromise ||
+      aiSubtitleController ||
+      subtitleExportController ||
+      subtitlePreviewController ||
+      materialAnalysisController
+    )
+      throw new Error("目前有字幕或 AI 工作正在進行，請完成或暫停後再切換專案。");
     const running = [...backgroundJobs.values()].filter((job) => job.status === "RUNNING");
     if (running.length)
       throw new Error(
@@ -700,8 +740,14 @@ export function registerIpc(
     };
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
     if (result.canceled || !result.filePaths[0]) return null;
-    await userPreferences.rememberDirectory("PROJECT", result.filePaths[0]);
-    return store.openProject(result.filePaths[0]);
+    assertNoRunningProjectJobs(); // Dialogs may remain open while new work starts.
+    projectSwitchInProgress = true;
+    try {
+      await userPreferences.rememberDirectory("PROJECT", result.filePaths[0]);
+      return await store.openProject(result.filePaths[0]);
+    } finally {
+      projectSwitchInProgress = false;
+    }
   });
   ipcMain.handle("source:choose-files", (event) => runImport(event, "FILES"));
   ipcMain.handle("source:choose-folder", (event) => runImport(event, "FOLDER"));
@@ -1545,7 +1591,7 @@ export function registerIpc(
   const persistedManualSubtitlePath = async () => {
     if (lastManualSubtitleVideoPath) return lastManualSubtitleVideoPath;
     try {
-      const parsed = JSON.parse(await readFile(subtitleSourcePreferencePath, "utf8")) as { path?: unknown };
+      const parsed = JSON.parse(await readFile(subtitleSourcePreferencePath(), "utf8")) as { path?: unknown };
       if (typeof parsed.path === "string" && path.isAbsolute(parsed.path)) lastManualSubtitleVideoPath = parsed.path;
     } catch {
       /* no saved manual source */
@@ -1572,8 +1618,10 @@ export function registerIpc(
     });
     return result;
   });
-  ipcMain.handle("subtitle:analysis-video:choose", async (event) => {
-    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+  ipcMain.handle("subtitle:analysis-video:choose", (event) =>
+    withProjectOperation(async () => {
+      const selectedProjectId = store.getProject().id;
+      const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options: Electron.OpenDialogOptions = {
       title: "選擇 AI 字幕分析影片（只讀）",
       properties: ["openFile"],
@@ -1584,15 +1632,17 @@ export function registerIpc(
     const selectedPath = path.resolve(result.filePaths[0]);
     const file = await stat(selectedPath);
     if (!file.isFile() || file.size < 1) throw new Error("選取的分析影片不存在或是空檔案。");
+    if (store.getProject().id !== selectedProjectId)
+      throw new Error("選取影片期間已切換專案；請重新選擇。");
     lastManualSubtitleVideoPath = selectedPath;
     explicitSubtitleVideoPath = selectedPath;
     resumedSubtitleSelectionReason = undefined;
-    await mkdir(path.dirname(subtitleSourcePreferencePath), { recursive: true });
-    const preferencePartial = `${subtitleSourcePreferencePath}.${process.pid}.partial`;
+    await mkdir(path.dirname(subtitleSourcePreferencePath()), { recursive: true });
+    const preferencePartial = `${subtitleSourcePreferencePath()}.${process.pid}.partial`;
     await writeFile(preferencePartial, JSON.stringify({ schemaVersion: 1, path: selectedPath }, null, 2), "utf8");
-    await rename(preferencePartial, subtitleSourcePreferencePath);
+    await rename(preferencePartial, subtitleSourcePreferencePath());
     return describeSubtitleVideo({ reason: "MANUAL_PATH", path: selectedPath });
-  });
+    }));
   const publishSubtitleVisualProgress = (
     event: Electron.IpcMainInvokeEvent,
     progress: SubtitleVisualAnalysisProgress,
@@ -2102,8 +2152,8 @@ export function registerIpc(
     progress?: SubtitleVisualAnalysisProgress;
   } = {};
   const saveSubtitleVisualCheckpoint = async (options: SubtitleVisualAnalysisOptions, status: string) => {
-    await mkdir(path.dirname(subtitleVisualCheckpointPath), { recursive: true });
-    const partial = `${subtitleVisualCheckpointPath}.${process.pid}.partial`;
+    await mkdir(path.dirname(subtitleVisualCheckpointPath()), { recursive: true });
+    const partial = `${subtitleVisualCheckpointPath()}.${process.pid}.partial`;
     await writeFile(
       partial,
       JSON.stringify(
@@ -2120,7 +2170,7 @@ export function registerIpc(
       ),
       "utf8",
     );
-    await rename(partial, subtitleVisualCheckpointPath);
+    await rename(partial, subtitleVisualCheckpointPath());
   };
   const runSubtitleVisualJob = async (event: Electron.IpcMainInvokeEvent, options: SubtitleVisualAnalysisOptions) => {
     if (subtitleVisualController) throw new Error("AI 畫面字幕分析已在進行中。");
@@ -2206,7 +2256,7 @@ export function registerIpc(
         .digest("hex");
       try {
         const saved = JSON.parse(
-          await readFile(subtitleVisualCheckpointPath, "utf8"),
+          await readFile(subtitleVisualCheckpointPath(), "utf8"),
         ) as typeof subtitleVisualResumeData & {
           projectId?: string;
           status?: string;
@@ -2437,7 +2487,7 @@ export function registerIpc(
     if (subtitleVisualLastOptions) await saveSubtitleVisualCheckpoint(subtitleVisualLastOptions, "CANCELLED");
   });
   ipcMain.handle("subtitle:visual-job:resume", async (event) => {
-    const saved = JSON.parse(await readFile(subtitleVisualCheckpointPath, "utf8")) as {
+    const saved = JSON.parse(await readFile(subtitleVisualCheckpointPath(), "utf8")) as {
       projectId: string;
       options: SubtitleVisualAnalysisOptions;
       videoPath?: string;
