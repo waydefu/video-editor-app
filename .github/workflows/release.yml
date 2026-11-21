@@ -1,9 +1,10 @@
 name: Release
 
-# Full `npm run package:win` still requires the shutter sound asset at a fixed
-# local path (see scripts/package-win.mjs), so cloud packaging stays local
-# until that path becomes configurable. This workflow ships the verified web
-# build (dist + dist-electron) as a versioned GitHub Release instead.
+# Full `npm run package:win` requires an externally provided, checksum-pinned
+# licensed shutter sound asset (assets/camera-shutter-click-14671.mp3 or
+# SCENERYWALKER_SHUTTER_MP3). The asset is not committed to this repository.
+# This workflow therefore ships only verified dist + dist-electron, NOT a
+# packaged Windows executable, as a versioned GitHub Release.
 #
 # Trigger: push a tag like v0.56.0, or run manually from the Actions tab.
 
