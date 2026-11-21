@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CredentialProtector } from "../src/main/services/ai-settings";
-import { defaultDelay, YoutubeSettingsStore, YoutubeUploadService, type BrowserLauncher } from "../src/main/services/youtube-upload";
+import {
+  defaultDelay,
+  YoutubeSettingsStore,
+  YoutubeUploadService,
+  type BrowserLauncher,
+} from "../src/main/services/youtube-upload";
 
 const roots: string[] = [];
 const protector: CredentialProtector = {
