@@ -205,6 +205,31 @@ describe("ProjectStore", () => {
     expect(reopened.getProjectFileState().filePath).toBe(path.resolve(projectPath));
   });
 
+  it("Save As to another path creates a distinct project and preserves the original", async () => {
+    const root = await tempRoot();
+    const sourcePath = path.join(root, "source.mp4");
+    await writeFile(sourcePath, "read-only-original");
+    const store = new ProjectStore(path.join(root, "data"));
+    await store.initialize();
+    await store.addAssets([asset(sourcePath)]);
+    const firstPath = path.join(root, "first.swproj");
+    const secondPath = path.join(root, "second.swproj");
+    const first = await store.saveProjectAs(firstPath, "first");
+    const second = await store.saveProjectAs(secondPath, "second");
+    expect(second.project.id).not.toBe(first.project.id);
+    expect(second.project.sources).toHaveLength(1);
+    await store.setSortMode("FILE_NAME");
+    const original = await store.openProject(firstPath);
+    expect(original.project.id).toBe(first.project.id);
+    expect(original.project.sortMode).toBe("SMART_SEQUENCE");
+    expect(original.project.sources).toHaveLength(1);
+    const copy = await store.openProject(secondPath);
+    expect(copy.project.id).toBe(second.project.id);
+    expect(copy.project.sortMode).toBe("FILE_NAME");
+    expect(await readFile(sourcePath, "utf8")).toBe("read-only-original");
+    expect(JSON.parse(await readFile(firstPath, "utf8")).id).toBe(first.project.id);
+  });
+
   it("opens an explicitly selected old project and leaves the current project unchanged when the file is invalid", async () => {
     const root = await tempRoot();
     const store = new ProjectStore(path.join(root, "app-data"));
