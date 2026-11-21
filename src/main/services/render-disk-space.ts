@@ -107,7 +107,7 @@ export function isEnospcError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return (
     candidate?.code === "ENOSPC" ||
-    /(?:error code:\s*-28|no space left on device|error writing trailer|error muxing a packet|error closing file)/i.test(
+    /(?:\bENOSPC\b|error code:\s*-28\b|errno\s*[:=]\s*-28\b|no space left on device|disk quota exceeded)/i.test(
       message,
     )
   );
