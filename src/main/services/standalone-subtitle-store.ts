@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { StandaloneSubtitleWorkspace, SubtitleCue } from "../../shared/domain";
 import { serializeSrt } from "./subtitle-export";
@@ -98,8 +98,12 @@ export class StandaloneSubtitleStore {
   private async atomic(filePath: string, text: string): Promise<void> {
     await mkdir(path.dirname(filePath), { recursive: true });
     const partial = `${filePath}.${randomUUID()}.partial`;
-    await writeFile(partial, text, { encoding: "utf8", flag: "wx" });
-    await rename(partial, filePath);
+    try {
+      await writeFile(partial, text, { encoding: "utf8", flag: "wx" });
+      await rename(partial, filePath);
+    } finally {
+      await rm(partial, { force: true }).catch(() => undefined);
+    }
   }
   private async write(workspace: StandaloneSubtitleWorkspace): Promise<StandaloneSubtitleWorkspace> {
     const sorted = [...workspace.cues].sort((a, b) => a.startMs - b.startMs);
