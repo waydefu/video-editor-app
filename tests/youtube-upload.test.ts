@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CredentialProtector } from "../src/main/services/ai-settings";
-import { YoutubeSettingsStore, YoutubeUploadService, type BrowserLauncher } from "../src/main/services/youtube-upload";
+import { defaultDelay, YoutubeSettingsStore, YoutubeUploadService, type BrowserLauncher } from "../src/main/services/youtube-upload";
 
 const roots: string[] = [];
 const protector: CredentialProtector = {
@@ -32,6 +32,20 @@ afterEach(async () => {
 });
 
 describe("secure YouTube preview upload", () => {
+  it("detaches retry-delay abort listeners after normal completion", async () => {
+    const signal = new AbortController().signal;
+    const detached = vi.spyOn(signal, "removeEventListener");
+    await defaultDelay(1, signal);
+    expect(detached).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("rejects retry delays promptly on cancellation", async () => {
+    const controller = new AbortController();
+    const pending = defaultDelay(10000, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("stores secrets protected and uploads a completed MP4 as unlisted with resumable parameters", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "youtube-upload-"));
     roots.push(root);
