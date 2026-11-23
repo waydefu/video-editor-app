@@ -9,6 +9,11 @@ on:
     branches: ["**"]
   pull_request:
 
+# Cancel obsolete runs for the same ref, but keep other branches and PRs independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: windows-latest
