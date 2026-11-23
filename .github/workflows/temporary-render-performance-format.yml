@@ -1,0 +1,32 @@
+name: Temporary render performance formatting
+on:
+  push:
+    branches:
+      - fix/v088-project-isolation-20261121
+    paths:
+      - .github/workflows/temporary-render-performance-format.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npx prettier --write src/main/services/render-estimate.ts src/renderer/components/ConcatRenderModal.tsx tests/render-estimate.test.ts tests/renderer/concat-render-modal.test.tsx
+      - name: Commit formatting changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main/services/render-estimate.ts src/renderer/components/ConcatRenderModal.tsx tests/render-estimate.test.ts tests/renderer/concat-render-modal.test.tsx
+          if ! git diff --cached --quiet; then
+            git commit -m "style: format long-render estimates and guidance"
+            git push origin HEAD:refs/heads/fix/v088-project-isolation-20261121
+          fi
