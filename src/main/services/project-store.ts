@@ -513,6 +513,14 @@ function migrateProject(raw: Record<string, unknown>): ProjectManifest {
   };
 }
 
+/** Windows project files are case-insensitive; Save As must not fork the same file. */
+export function sameProjectFilePath(left: string, right: string, windows = process.platform === "win32"): boolean {
+  const resolver = windows ? path.win32 : path;
+  const a = resolver.resolve(left);
+  const b = resolver.resolve(right);
+  return windows ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 export class ProjectStore {
   private current: ProjectManifest = createProject();
   private writeChain: Promise<void> = Promise.resolve();
@@ -626,7 +634,14 @@ export class ProjectStore {
     const name = projectName.trim();
     if (!name) throw new Error("專案名稱不可空白。");
     const project = await this.queueProjectFileOperation(async () => {
-      const next = { ...clone(this.current), name, updatedAt: new Date().toISOString() };
+      // Saving to a different path forks the project: output/resume and subtitle keys must not collide.
+      const fork = this.activeProjectPath !== undefined && !sameProjectFilePath(this.activeProjectPath, resolved);
+      const next = {
+        ...clone(this.current),
+        ...(fork ? { id: randomUUID(), createdAt: new Date().toISOString() } : {}),
+        name,
+        updatedAt: new Date().toISOString(),
+      };
       await this.persistProject(next, resolved);
       await this.writeSessionPointer(resolved);
       const previous = this.getProject();

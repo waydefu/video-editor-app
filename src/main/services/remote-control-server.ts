@@ -133,17 +133,31 @@ export class RemoteControlServer {
     this.addresses = lanAddresses();
     const server = createServer((request, response) => void this.handle(request, response));
     this.server = server;
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, this.addresses[0] ?? "127.0.0.1", () => {
-        server.off("error", reject);
-        resolve();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, this.addresses[0] ?? "127.0.0.1", () => {
+          server.off("error", reject);
+          resolve();
+        });
       });
-    });
-    this.port = (server.address() as { port: number }).port;
-    this.unsubscribe = this.renderState.subscribe((snapshot) => this.broadcast(snapshot));
-    await this.rotatePairing();
-    return this.status();
+      this.port = (server.address() as { port: number }).port;
+      this.unsubscribe = this.renderState.subscribe((snapshot) => this.broadcast(snapshot));
+      await this.rotatePairing();
+      return this.status();
+    } catch (error) {
+      // A failed bind or QR setup must not leave a phantom "enabled" server.
+      if (server.listening) await this.stop();
+      else {
+        this.server = undefined;
+        this.port = undefined;
+        this.pairing = undefined;
+        this.rawPairingToken = undefined;
+        this.qrDataUrl = undefined;
+        this.notifyStatus();
+      }
+      throw error;
+    }
   }
 
   async stop(): Promise<RemoteControlStatus> {

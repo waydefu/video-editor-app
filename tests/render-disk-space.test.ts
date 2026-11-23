@@ -30,6 +30,23 @@ describe("render disk reliability", () => {
     expect(remainingReservedWriteBytes(estimated, 2 * GIB, 50 * GIB)).toBe(0);
   });
 
+  it("uses independent soft reserves for TEMP and cross-volume final output", async () => {
+    const monitor = new RenderDiskMonitor({
+      tempRoot: "D:\\RenderTemp",
+      outputPath: "C:\\Exports\\final.mp4",
+      tempLocations: [{ id: "primary", path: "D:\\RenderTemp", role: "PRIMARY", enabled: true, reserveBytes: 6 * GIB }],
+      estimatedRemainingWriteBytes: () => 0,
+      estimatedFinalOutputBytes: 0,
+      diskSpaceForMonitoring: async () => ({ freeBytes: 5 * GIB, capacityBytes: 500 * GIB }),
+    });
+    const snapshot = await monitor.snapshot("TEST");
+    const primary = snapshot.volumes?.find((item) => item.role === "PRIMARY");
+    const output = snapshot.volumes?.find((item) => item.role === "FINAL_OUTPUT");
+    expect(primary?.reserveBytes).toBe(6 * GIB);
+    expect(output?.reserveBytes).toBe(2 * GIB);
+    expect(output?.pressureLevel).toBe("OK");
+  });
+
   it("reports an offline inactive primary without throwing", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "render-monitor-offline-"));
     try {
@@ -94,7 +111,10 @@ describe("render disk reliability", () => {
 
   it("recognizes Windows/FFmpeg ENOSPC variants and keeps the advisory reserve small", () => {
     expect(isEnospcError(new Error("Task finished with error code: -28 (No space left on device)"))).toBe(true);
-    expect(isEnospcError(new Error("Error muxing a packet; Error writing trailer"))).toBe(true);
+    expect(isEnospcError(new Error("Error muxing a packet; Error writing trailer"))).toBe(false);
+    expect(isEnospcError(new Error("Error closing file: Invalid argument"))).toBe(false);
+    expect(isEnospcError(new Error("FFmpeg reported errno=-28 while writing trailer"))).toBe(true);
+    expect(isEnospcError(Object.assign(new Error("io failed"), { code: "ENOSPC" }))).toBe(true);
     expect(isEnospcError(new Error("Cannot allocate memory"))).toBe(false);
     expect(safetyReserveBytes(10 * GIB)).toBe(1 * GIB);
     expect(safetyReserveBytes(200 * GIB)).toBe(1 * GIB);

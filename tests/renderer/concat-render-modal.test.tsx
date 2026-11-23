@@ -788,6 +788,25 @@ describe("concat render background mode", () => {
     expect(screen.getByRole("checkbox", { name: "启用成功后自动电源动作" })).not.toBeChecked();
   });
 
+  it("offers an explicit safer-mode choice for long low-disk projects", async () => {
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(
+      <ConcatRenderModal
+        assets={[asset]}
+        mainClips={[{ assetId: "a", inMs: 0, outMs: 1000 }] as never}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText("長影片效能提示")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "切換平衡模式並重新估算" }));
+    expect(screen.getByRole("radio", { name: "一般轉檔模式" })).toBeChecked();
+    await waitFor(() =>
+      expect(api.estimateConcatRender).toHaveBeenLastCalledWith(
+        expect.objectContaining({ lowMemorySegmented: false, resourceProfile: "BALANCED" }),
+      ),
+    );
+  });
+
   it("keeps × enabled during rendering; closing does not cancel the render", async () => {
     Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
     const onClose = vi.fn();
@@ -851,7 +870,7 @@ describe("concat render background mode", () => {
       }),
     );
     expect(await screen.findByText("已耗時：00:05:05")).toBeInTheDocument();
-    expect(screen.getByText("預估剩餘：00:10:10")).toBeInTheDocument();
+    expect(screen.getByText("目前 FFmpeg 階段預估剩餘：00:10:10")).toBeInTheDocument();
 
     await act(async () =>
       resolveRender?.({

@@ -2,6 +2,12 @@
 
 這是 Windows 剪接、預覽與轉檔 App。它可選擇及排列影片／照片、建立片頭與正片預覽、輸出最終影片並管理續轉資料；來源檔不會因預覽或字幕分析而改寫或刪除。YouTube 等上傳功能需使用者確認。只有使用者主動啟動 AI 分析時，才會送出取樣影格與背景文字；字幕視覺分析使用另外設定的服務憑證，不會自動執行付費長片分析。
 
+## 從原始碼建立 Windows 可攜版（須提供核准音效）
+
+`npm run build` 不需要額外音效；`npm run package:win` 會將快門音效一起封裝，必須先提供已確認授權及固定 SHA-256 的原始 MP3。請從 [Pixabay 原素材頁](https://pixabay.com/sound-effects/technology-camera-shutter-click-14671/) 確認授權並取得 `camera-shutter-click-14671.mp3`，放在 `assets/camera-shutter-click-14671.mp3`，或將環境變數 `SCENERYWALKER_SHUTTER_MP3` 設為本機檔案完整路徑。封裝器會比對 `0AC71ECABF302784F5FFB9483C2939C46B1784AA0D016A322CB6D1A0ECA07B93`；不符就拒絕封裝。此倉庫**不含音效二進位檔**，也不再依賴原作者私有磁碟路徑或舊版 Release 目錄。
+
+建置與測試指令：`npm ci`、`npm run format:check`、`npm run typecheck`、`npx vitest run`、`npm run build`、`npm run package:win`、`npm run smoke:packaged`。CI 只執行建置與功能測試，並未自動驗證有外部素材的正式 Windows 封裝。
+
 目前版本：v0.88.0。字幕 Review 支援目前範圍內跨影片／照片接續播放、依精確時間顯示目前草稿、左側固定焦點跟隨及右側固定預覽；Space 暫停／續播不影響文字輸入。新增可選的 AI 逐筆 KEEP/EDIT 提案與人工確認、既有 SRT 獨立匯入，以及正式 SRT 明確匯出前的備份。完整回歸 96 files／585 tests、Windows 封裝及封裝啟動檢查通過；可攜版位於 `release/v0.88.0/SceneryWalkerSourceOrganizer-win32-x64/SceneryWalkerSourceOrganizer-v0.88.0.exe`，完整驗收見 `docs/V088_SUBTITLE_REVIEW_REPORT.md`。單筆真實 OpenAI 圖片 review 受 billing/quota 429 阻擋，尚無成功 AI 提案，不能把模擬測試當作 live 成功。片頭→正片跨範圍自動接續未完成；Proxy review 採 cut 接續，不是 Final xfade 合成預覽。歷史 v0.87.0 與更早 release 保留。
 
 v0.87.0 的字幕捲動、VIDEO_FIRST、動態模型與真實取樣紀錄見 `docs/V087_SUBTITLE_RECOVERY_REPORT.md`、`docs/VERIFICATION.md`。

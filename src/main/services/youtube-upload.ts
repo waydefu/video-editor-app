@@ -112,21 +112,21 @@ function assertNotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError();
 }
 
-function defaultDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+export function defaultDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortError());
       return;
     }
-    const timer = setTimeout(resolve, milliseconds);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(abortError());
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -510,6 +510,7 @@ export class YoutubeUploadService {
 
     const handle = await open(outputPath, "r");
     let offset = 0;
+    let stalledAcknowledgements = 0;
     let uploaded: UploadedVideoResponse | undefined;
     try {
       while (offset < totalBytes) {
@@ -552,8 +553,27 @@ export class YoutubeUploadService {
             `YouTube 上傳連線失敗：${lastError instanceof Error ? lastError.message : String(lastError)}`,
           );
         if (response.status === 308) {
-          const range = response.headers.get("range")?.match(/bytes=0-(\d+)/i);
-          offset = range ? Number(range[1]) + 1 : offset + length;
+          // Google omits Range when *no bytes* were accepted. Never assume that
+          // an attempted chunk was acknowledged just because the request returned 308.
+          const rawRange = response.headers.get("range");
+          const match = rawRange?.match(/^bytes=0-(\d+)$/i);
+          if (rawRange && !match) throw new Error("YouTube 回傳無法辨識的續傳 Range，已停止以避免影片資料錯位。");
+          const acknowledged = match ? Number(match[1]) + 1 : 0;
+          if (
+            !Number.isSafeInteger(acknowledged) ||
+            acknowledged < offset ||
+            acknowledged > offset + length ||
+            acknowledged > totalBytes
+          )
+            throw new Error("YouTube 續傳位置超出本次上傳區間，已停止以避免覆寫或跳過資料。");
+          if (acknowledged === offset) {
+            stalledAcknowledgements += 1;
+            if (stalledAcknowledgements >= 5) throw new Error("YouTube 多次未確認收到任何資料，已停止以避免無限重試。");
+            await this.delay(Math.min(2_000, stalledAcknowledgements * 250), signal);
+          } else {
+            stalledAcknowledgements = 0;
+          }
+          offset = acknowledged;
           onProgress({
             phase: "UPLOADING",
             bytesUploaded: offset,
@@ -566,6 +586,34 @@ export class YoutubeUploadService {
         uploaded = (await response.json()) as UploadedVideoResponse;
         offset = totalBytes;
         onProgress({ phase: "FINALIZING", bytesUploaded: totalBytes, totalBytes, percent: 100 });
+      }
+      // A final 308 may acknowledge the entire file before YouTube returns its
+      // video ID. Query the existing session instead of claiming upload failure.
+      if (!uploaded && offset === totalBytes) {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          assertNotAborted(signal);
+          const statusResponse = await this.fetcher(uploadUrl, {
+            method: "PUT",
+            headers: {
+              authorization: `Bearer ${accessToken}`,
+              "content-length": "0",
+              "content-range": `bytes */${totalBytes}`,
+            },
+            redirect: "manual",
+            signal,
+          });
+          if (statusResponse.ok) {
+            uploaded = (await statusResponse.json()) as UploadedVideoResponse;
+            onProgress({ phase: "FINALIZING", bytesUploaded: totalBytes, totalBytes, percent: 100 });
+            break;
+          }
+          if (statusResponse.status !== 308)
+            throw new Error(`YouTube 上傳狀態查詢失敗：${await this.responseError(statusResponse)}`);
+          const range = statusResponse.headers.get("range")?.match(/^bytes=0-(\d+)$/i);
+          if (!range || Number(range[1]) + 1 !== totalBytes)
+            throw new Error("YouTube 續傳狀態與已上傳位元組不一致，請檢查上傳工作狀態。");
+          await this.delay(Math.min(2_000, (attempt + 1) * 400), signal);
+        }
       }
     } finally {
       await handle.close();

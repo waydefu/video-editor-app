@@ -9,39 +9,21 @@ const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageMeta = JSON.parse(await readFile(path.join(appRoot, "package.json"), "utf8"));
 const outputRoot = path.join(appRoot, "release", `v${packageMeta.version}`);
 const executableName = `SceneryWalkerSourceOrganizer-v${packageMeta.version}`;
-const dunesShutterSource = [
-  "C:\\草漯沙丘地質公園 YT長片\\camera shutter sound\\freesound_community-camera-shutter-click-14671.mp3",
-  path.join(
-    appRoot,
-    "release",
-    "v0.84.0",
-    "SceneryWalkerSourceOrganizer-win32-x64",
-    "resources",
-    "assets",
-    "camera-shutter-click-14671.mp3",
-  ),
-  path.join(
-    appRoot,
-    "release",
-    "v0.75.0",
-    "SceneryWalkerSourceOrganizer-win32-x64",
-    "resources",
-    "assets",
-    "camera-shutter-click-14671.mp3",
-  ),
-  path.join(
-    appRoot,
-    "release",
-    "v0.61.0",
-    "SceneryWalkerSourceOrganizer-win32-x64",
-    "resources",
-    "assets",
-    "camera-shutter-click-14671.mp3",
-  ),
-].find((candidate) => existsSync(candidate));
+// Release packaging must not depend on a developer's drive letters or old release folders.
+// Supply the licensed, checksum-pinned source in assets/ or via an explicit environment variable.
+const shutterFromEnvironment = process.env.SCENERYWALKER_SHUTTER_MP3?.trim();
+const shutterCandidates = [
+  shutterFromEnvironment ? path.resolve(shutterFromEnvironment) : undefined,
+  path.join(appRoot, "assets", "camera-shutter-click-14671.mp3"),
+].filter(Boolean);
+const dunesShutterSource = shutterCandidates.find((candidate) => existsSync(candidate));
 const dunesShutterHash = "0AC71ECABF302784F5FFB9483C2939C46B1784AA0D016A322CB6D1A0ECA07B93";
 
-if (!dunesShutterSource) throw new Error("找不到已核准的沙丘快門音效，已停止封裝。");
+if (!dunesShutterSource)
+  throw new Error(
+    "找不到已核准的快門音效。請從 https://pixabay.com/sound-effects/technology-camera-shutter-click-14671/ " +
+      "下載並核對 SHA-256，存為 assets/camera-shutter-click-14671.mp3，或設定 SCENERYWALKER_SHUTTER_MP3。未提供驗證素材前禁止封裝。",
+  );
 const shutterBytes = await readFile(dunesShutterSource);
 if (createHash("sha256").update(shutterBytes).digest("hex").toUpperCase() !== dunesShutterHash) {
   throw new Error("沙丘前案相機快門音效雜湊不符，已停止封裝。");

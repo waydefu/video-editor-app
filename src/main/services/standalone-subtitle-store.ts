@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { StandaloneSubtitleWorkspace, SubtitleCue } from "../../shared/domain";
 import { serializeSrt } from "./subtitle-export";
@@ -13,6 +13,10 @@ export function authorizeSubtitleVideo(videoPath: string): string {
 export function resolveSubtitleVideo(id: string): string | undefined {
   return allowedVideos.get(id);
 }
+/** Revoke source-media URLs from the previously active project. */
+export function clearAuthorizedSubtitleVideos(): void {
+  allowedVideos.clear();
+}
 
 export class StandaloneSubtitleStore {
   constructor(private readonly root: string) {}
@@ -20,15 +24,19 @@ export class StandaloneSubtitleStore {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("獨立字幕工作區識別碼無效。");
     return path.join(this.root, id, "workspace.json");
   }
+  private draftPath(id: string, videoPath: string): string {
+    return path.join(this.root, id, `${path.parse(videoPath).name}.ai-draft.srt`);
+  }
   async create(
     videoPath: string,
     videoFingerprint: string,
     videoDurationMs: number,
     cues: SubtitleCue[],
     source?: { projectId: string; timelineRevision: number },
+    ownerProjectId?: string,
   ): Promise<StandaloneSubtitleWorkspace> {
     const id = createHash("sha256")
-      .update(source ? `${videoFingerprint}\0${source.projectId}\0${source.timelineRevision}` : videoFingerprint)
+      .update(`${videoFingerprint}\0${source?.projectId ?? ownerProjectId ?? "legacy"}\0${randomUUID()}`)
       .digest("hex");
     const workspace: StandaloneSubtitleWorkspace = {
       id,
@@ -36,24 +44,51 @@ export class StandaloneSubtitleStore {
       videoFingerprint,
       videoDurationMs,
       cues,
-      draftPath: path.join(this.root, id, `${path.parse(videoPath).name}.ai-draft.srt`),
+      draftPath: this.draftPath(id, videoPath),
       updatedAt: new Date().toISOString(),
+      ownerProjectId: source?.projectId ?? ownerProjectId,
       sourceProjectId: source?.projectId,
       sourceTimelineRevision: source?.timelineRevision,
     };
     return this.write(workspace);
   }
-  async get(id: string): Promise<StandaloneSubtitleWorkspace> {
+  async get(id: string, authorizePreview = true): Promise<StandaloneSubtitleWorkspace> {
     const workspace = JSON.parse(await readFile(this.workspacePath(id), "utf8")) as StandaloneSubtitleWorkspace;
     if (workspace.id !== id || !Array.isArray(workspace.cues)) throw new Error("獨立字幕工作區格式無效。");
-    workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
+    // The persisted draft path is untrusted; never let a modified workspace
+    // turn a subtitle save into an arbitrary filesystem overwrite.
+    if (
+      typeof workspace.videoPath !== "string" ||
+      typeof workspace.draftPath !== "string" ||
+      path.resolve(workspace.draftPath) !== path.resolve(this.draftPath(id, workspace.videoPath))
+    )
+      throw new Error("字幕草稿儲存路徑與工作區不一致，已拒絕寫入。");
+    if (authorizePreview) workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return workspace;
   }
-  async latest(): Promise<StandaloneSubtitleWorkspace | null> {
+  private latestPointerPath(projectId?: string): string {
+    if (!projectId) return path.join(this.root, "latest.json"); // Preserve legacy drafts without auto-assigning them.
+    if (!projectId.trim()) throw new Error("字幕專案識別碼無效。");
+    // Legacy manifests may use short or non-UUID IDs; hashing also prevents path traversal.
+    const key = createHash("sha256").update(projectId).digest("hex");
+    return path.join(this.root, "latest-by-project", `${key}.json`);
+  }
+  async latest(projectId?: string, authorizePreview = true): Promise<StandaloneSubtitleWorkspace | null> {
     try {
-      const pointer = JSON.parse(await readFile(path.join(this.root, "latest.json"), "utf8"));
-      return await this.get(pointer.id);
+      const pointer = JSON.parse(await readFile(this.latestPointerPath(projectId), "utf8")) as { id?: string };
+      if (!pointer.id) return null;
+      const workspace = await this.get(pointer.id, false);
+      if (projectId && (workspace.ownerProjectId ?? workspace.sourceProjectId) !== projectId) return null;
+      if (authorizePreview) workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
+      return workspace;
     } catch {
+      if (projectId) {
+        // Safely expose pre-migration *project-linked* drafts, never arbitrary global VIDEO_FIRST drafts.
+        const legacy = await this.latest(undefined, false);
+        if (legacy?.sourceProjectId !== projectId) return null;
+        if (authorizePreview) legacy.previewUrl = authorizeSubtitleVideo(legacy.videoPath);
+        return legacy;
+      }
       return null;
     }
   }
@@ -63,8 +98,12 @@ export class StandaloneSubtitleStore {
   private async atomic(filePath: string, text: string): Promise<void> {
     await mkdir(path.dirname(filePath), { recursive: true });
     const partial = `${filePath}.${randomUUID()}.partial`;
-    await writeFile(partial, text, { encoding: "utf8", flag: "wx" });
-    await rename(partial, filePath);
+    try {
+      await writeFile(partial, text, { encoding: "utf8", flag: "wx" });
+      await rename(partial, filePath);
+    } finally {
+      await rm(partial, { force: true }).catch(() => undefined);
+    }
   }
   private async write(workspace: StandaloneSubtitleWorkspace): Promise<StandaloneSubtitleWorkspace> {
     const sorted = [...workspace.cues].sort((a, b) => a.startMs - b.startMs);
@@ -84,7 +123,7 @@ export class StandaloneSubtitleStore {
     workspace.cues = sorted;
     await this.atomic(this.workspacePath(workspace.id), JSON.stringify(workspace, null, 2));
     await this.atomic(workspace.draftPath, sorted.length ? serializeSrt(sorted) : "");
-    await this.atomic(path.join(this.root, "latest.json"), JSON.stringify({ id: workspace.id }));
+    await this.atomic(this.latestPointerPath(workspace.ownerProjectId), JSON.stringify({ id: workspace.id }));
     workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return structuredClone(workspace);
   }

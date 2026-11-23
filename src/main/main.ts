@@ -13,6 +13,8 @@ import {
   shell,
 } from "electron";
 import { registerIpc } from "./ipc";
+import { pathToFileURL } from "node:url";
+import { isTrustedAppNavigation } from "./services/trusted-navigation";
 import { ConcatRenderService } from "./services/concat-render";
 import { IntroAnalyzer } from "./services/intro-analyzer";
 import { MediaProbe } from "./services/media-probe";
@@ -126,8 +128,16 @@ function createWindow(): BrowserWindow {
   });
 
   const devServer = process.env.VITE_DEV_SERVER_URL;
+  const entryFilePath = path.join(__dirname, "../../dist/index.html");
+  const trustedEntryUrl = devServer ?? pathToFileURL(entryFilePath).href;
+  // A navigation to an untrusted page must never inherit the app's IPC preload bridge.
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!isTrustedAppNavigation(targetUrl, trustedEntryUrl, Boolean(devServer))) event.preventDefault();
+  });
+  // External links are opened only through explicit, validated main-process actions.
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   if (devServer) void window.loadURL(devServer);
-  else void window.loadFile(path.join(__dirname, "../../dist/index.html"));
+  else void window.loadFile(entryFilePath);
 
   if (automated) {
     const timer = setTimeout(

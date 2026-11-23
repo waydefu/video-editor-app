@@ -9,6 +9,7 @@ import {
   type AppApi,
   type ExternalPlayerSettingsSnapshot,
   type ProjectManifest,
+  type ProjectChangedEvent,
   type SourceAsset,
 } from "../../src/shared/domain";
 import { App } from "../../src/renderer/App";
@@ -752,6 +753,31 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("App source workflow", () => {
+  it("closes project-scoped AI Publish dialogs when another project becomes active", async () => {
+    const api = mockApi();
+    let onProjectChanged: ((change: ProjectChangedEvent) => void) | undefined;
+    api.onProjectChanged = vi.fn((callback: (change: ProjectChangedEvent) => void) => {
+      onProjectChanged = callback;
+    });
+    api.clearProjectChangedListeners = vi.fn();
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "08 AI 發布素材" }));
+    expect(await screen.findByRole("dialog", { name: "AI 發布素材" })).toBeInTheDocument();
+    act(() => {
+      onProjectChanged?.({
+        projectId: "different-project",
+        revision: 2,
+        updatedAt: "2026-11-22T00:00:00.000Z",
+        changedSections: [],
+        project: { ...structuredClone(project), id: "different-project", name: "獨立專案 B" },
+        filePath: "C:\\Projects\\B.swproj",
+      });
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "AI 發布素材" })).not.toBeInTheDocument());
+    expect(await screen.findByText(/專案：獨立專案 B/)).toBeInTheDocument();
+  });
+
   it("shows the app version and supports screen plus keyboard undo/redo", async () => {
     const api = mockApi();
     vi.mocked(api.getProjectHistoryState).mockResolvedValue({

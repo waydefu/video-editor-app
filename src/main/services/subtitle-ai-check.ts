@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   SubtitleAiCheckAction,
@@ -495,10 +495,14 @@ export class SubtitleAiCheckJobStore {
   async save(snapshot: SubtitleAiCheckJobSnapshot): Promise<void> {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     const partial = `${this.filePath}.${process.pid}.${randomUUID()}.partial`;
-    await writeFile(partial, JSON.stringify({ ...snapshot, updatedAt: new Date().toISOString() }, null, 2), {
-      encoding: "utf8",
-      flag: "wx",
-    });
-    await rename(partial, this.filePath);
+    try {
+      await writeFile(partial, JSON.stringify({ ...snapshot, updatedAt: new Date().toISOString() }, null, 2), {
+        encoding: "utf8",
+        flag: "wx",
+      });
+      await rename(partial, this.filePath);
+    } finally {
+      await rm(partial, { force: true }).catch(() => undefined);
+    }
   }
 }

@@ -45,6 +45,19 @@ async function firstSseSnapshot(origin: string, headers: Record<string, string>)
 }
 
 describe("RemoteControlServer", () => {
+  it("cleans up a listener if pairing initialization fails and permits retry", async () => {
+    const server = new RemoteControlServer(new RenderCommandState("Retry Project"));
+    const rotate = vi.spyOn(server, "rotatePairing").mockRejectedValueOnce(new Error("QR generation failed"));
+    await expect(server.start()).rejects.toThrow("QR generation failed");
+    expect(server.status().enabled).toBe(false);
+    expect(server.status().port).toBeUndefined();
+    rotate.mockRestore();
+    const status = await server.start();
+    running.push(server);
+    expect(status.enabled).toBe(true);
+    expect(status.pairingUrl).toMatch(/^http:\/\//);
+  });
+
   it("uses one-time fragment pairing, HttpOnly Strict cookie, CSRF and exact LAN host/origin", async () => {
     const state = new RenderCommandState("LAN Project");
     const server = new RemoteControlServer(state);
