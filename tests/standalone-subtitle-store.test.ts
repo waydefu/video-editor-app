@@ -202,5 +202,4 @@ describe("standalone subtitle drafts", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-
 });
