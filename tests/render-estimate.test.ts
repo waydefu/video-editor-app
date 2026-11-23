@@ -245,4 +245,50 @@ describe("render preflight estimate", () => {
     ]);
     expect(current.inputs[0].fps).toBeCloseTo(59.94, 1);
   });
+  it("does not charge the final master for every raw source after multi-level reduction", () => {
+    const makeTimeline = (count: number): RenderEstimateWorkload => ({
+      expectedDurationMs: 2 * 60 * 60_000,
+      transitionSeconds: 0.3,
+      inputs: Array.from({ length: count }, () => ({
+        durationMs: (2 * 60 * 60_000) / count + 300,
+        width: 3840,
+        height: 2160,
+        fps: 60,
+        codec: "hevc",
+        isPhoto: false,
+        isInsertion: false,
+        isGenerated: false,
+      })),
+    });
+    const estimate = (count: number) =>
+      buildRenderEstimate(
+        "C:\\Output\\large.mp4",
+        500 * 1024 ** 3,
+        2 * 60 * 60_000,
+        "4K",
+        "H265_QSV",
+        true,
+        makeTimeline(count),
+        24 * 1024 ** 3,
+        32 * 1024 ** 3,
+        { lowMemory: 4, normal: 8, highSpeed: 10 },
+        { lowMemory: 1, normal: 2, highSpeed: 4 },
+      );
+    const many = estimate(80);
+    const more = estimate(120);
+    expect(many.modeEstimates.lowMemory.intermediateJobCount).toBeGreaterThan(20);
+    expect(more.modeEstimates.lowMemory.intermediateJobCount).toBeGreaterThan(
+      many.modeEstimates.lowMemory.intermediateJobCount,
+    );
+    // The extra reduction work is real, but final graph complexity must remain
+    // bounded by its small normalized input count, not grow with all 120 clips.
+    expect(more.modeEstimates.lowMemory.estimatedRenderTimeMs).toBeLessThan(
+      many.modeEstimates.lowMemory.estimatedRenderTimeMs * 1.6,
+    );
+    expect(many.modeEstimates.normal.estimatedRenderTimeMs).toBeLessThan(
+      many.modeEstimates.lowMemory.estimatedRenderTimeMs,
+    );
+  });
+
+
 });
