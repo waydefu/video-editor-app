@@ -2571,6 +2571,39 @@ export function ConcatRenderModal({
                       </span>
                     </label>
                   </div>
+                  {lowMemorySegmented &&
+                    !rendering &&
+                    renderEstimate &&
+                    renderEstimate.workload.visualInputCount >= 12 &&
+                    renderEstimate.modeEstimates.normal.estimatedRenderTimeMs <
+                      renderEstimate.modeEstimates.lowMemory.estimatedRenderTimeMs * 0.85 && (
+                      <div className="notice warning" role="status">
+                        <strong>長影片效能提示</strong>
+                        <span>
+                          目前低磁碟模式固定單工作、每批最多 4 個輸入，可能需要更多中繼層。平衡模式的理論時間較短，
+                          但仍須由本機 FFmpeg 實測確認。
+                        </span>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={
+                            !renderEstimate.modeEstimates.normal.canRender ||
+                            renderEstimate.modeEstimates.normal.warningLevel === "DANGER"
+                          }
+                          onClick={() => {
+                            setLowMemorySegmented(false);
+                            setHighSpeedMode(false);
+                            rememberRenderDefaults({
+                              lowMemorySegmented: false,
+                              highSpeedMode: false,
+                              resourceProfile: "BALANCED",
+                            });
+                          }}
+                        >
+                          切換平衡模式並重新估算
+                        </button>
+                      </div>
+                    )}
                   <div className="render-resource-budget" aria-label="轉檔資源上限">
                     <label>
                       APP RAM 上限
@@ -3839,7 +3872,7 @@ export function ConcatRenderModal({
                           <span>累積轉檔耗時：{formatRenderClock(displayedCumulativeElapsedMs)}</span>
                         )}
                       {progress?.estimatedRemainingMs !== undefined && (
-                        <span>預估剩餘：{formatRenderClock(progress.estimatedRemainingMs)}</span>
+                        <span>目前 FFmpeg 階段預估剩餘：{formatRenderClock(progress.estimatedRemainingMs)}</span>
                       )}
                     </div>
                   )}
