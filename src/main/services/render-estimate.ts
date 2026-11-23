@@ -339,7 +339,8 @@ function buildModeEstimate(
   // multiplies the cost of 100+ clip timelines even though they were reduced.
   const finalInputCount = usesSegmentedPipeline ? stage.finalInputCount : inputs.length;
   const graphFactor =
-    1 + Math.max(0, finalInputCount - 1) * 0.012 +
+    1 +
+    Math.max(0, finalInputCount - 1) * 0.012 +
     (usesSegmentedPipeline ? 0 : inputs.filter((item) => item.isInsertion).length * 0.02);
   const finalDecodeFactor = usesSegmentedPipeline ? 1 : decodeFactor;
   const baseRenderMs =
@@ -353,8 +354,8 @@ function buildModeEstimate(
   // later level decodes normalized H.264 intermediates at output resolution.
   const stagedCodecFactor = REALTIME_FACTOR[resolution][intermediateCodec];
   const stagedRenderMs =
-    ((stage.leafIntermediateWorkMs * Math.max(0.8, decodeFactor * 0.85) +
-      stage.normalizedIntermediateWorkMs) * stagedCodecFactor) /
+    ((stage.leafIntermediateWorkMs * Math.max(0.8, decodeFactor * 0.85) + stage.normalizedIntermediateWorkMs) *
+      stagedCodecFactor) /
       Math.max(1, boundedParallelJobs * 0.82) +
     stage.intermediateJobCount * 8_000;
   const estimatedRenderTimeMs = Math.ceil(20_000 + baseRenderMs + stagedRenderMs);

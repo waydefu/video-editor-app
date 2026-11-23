@@ -289,6 +289,4 @@ describe("render preflight estimate", () => {
       many.modeEstimates.lowMemory.estimatedRenderTimeMs,
     );
   });
-
-
 });
