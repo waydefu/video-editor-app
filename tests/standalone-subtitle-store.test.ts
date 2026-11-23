@@ -164,4 +164,43 @@ describe("standalone subtitle drafts", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("never persists or trusts a stale source-media preview authorization", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "subtitle-preview-capability-"));
+    try {
+      const workspaceRoot = path.join(root, "workspaces");
+      const videoPath = path.join(root, "source.mp4");
+      const service = new StandaloneSubtitleStore(workspaceRoot);
+      const saved = await service.create(
+        videoPath,
+        "fingerprint",
+        1000,
+        [{ id: "c1", startMs: 0, endMs: 500, text: "first" }],
+        undefined,
+        "project-safe",
+      );
+      const filePath = path.join(workspaceRoot, saved.id, "workspace.json");
+      expect(JSON.parse(await readFile(filePath, "utf8")).previewUrl).toBeUndefined();
+
+      // Saving a workspace fetched with preview authorization must not persist it.
+      await service.save(saved.id, [{ id: "c1", startMs: 0, endMs: 500, text: "second" }]);
+      const raw = JSON.parse(await readFile(filePath, "utf8")) as typeof saved;
+      expect(raw.previewUrl).toBeUndefined();
+
+      // Historical files could contain a stale or forged preview URL.
+      raw.previewUrl = `source-media://subtitle/${"a".repeat(64)}`;
+      await writeFile(filePath, JSON.stringify(raw));
+      clearAuthorizedSubtitleVideos();
+      expect((await service.get(saved.id, false)).previewUrl).toBeUndefined();
+
+      const restored = await service.get(saved.id);
+      const videoId = restored.previewUrl?.split("/").at(-1);
+      expect(videoId).toBeDefined();
+      expect(resolveSubtitleVideo(videoId!)).toBe(path.resolve(videoPath));
+      expect(restored.previewUrl).not.toBe(raw.previewUrl);
+    } finally {
+      clearAuthorizedSubtitleVideos();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });
