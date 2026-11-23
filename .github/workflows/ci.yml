@@ -21,13 +21,23 @@ jobs:
           node-version: "24"
           cache: npm
 
-      - name: Install FFmpeg 8.1.2 (pinned to local toolchain)
-        if: matrix.ffmpeg != 'latest'
-        run: choco install ffmpeg --version=8.1.2 -y
-
-      - name: Install latest FFmpeg (forward-compat guard)
-        if: matrix.ffmpeg == 'latest'
-        run: choco install ffmpeg -y
+      - name: Install FFmpeg (retry transient Chocolatey feed errors)
+        shell: pwsh
+        run: |
+          $requested = "${{ matrix.ffmpeg }}"
+          $arguments = @("install", "ffmpeg", "-y", "--no-progress")
+          if ($requested -ne "latest") { $arguments += "--version=$requested" }
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            & choco @arguments
+            $binary = Get-Command ffmpeg -ErrorAction SilentlyContinue
+            if ($LASTEXITCODE -eq 0 -and $binary) {
+              $installed = $true
+              break
+            }
+            if ($attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
+          }
+          if (-not $installed) { throw "FFmpeg $requested cannot be installed after 3 attempts." }
 
       - name: Show FFmpeg version
         run: |
