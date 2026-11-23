@@ -169,6 +169,8 @@ function simulateSegmentStages(
 ): {
   intermediateJobCount: number;
   intermediateWorkMs: number;
+  leafIntermediateWorkMs: number;
+  normalizedIntermediateWorkMs: number;
   peakIntermediateBytes: number;
   finalIntermediateBytes: number;
   concurrentPartialPeakBytes: number;
@@ -180,6 +182,9 @@ function simulateSegmentStages(
   let concurrentPartialPeakBytes = 0;
   let intermediateJobCount = 0;
   let intermediateWorkMs = 0;
+  let leafIntermediateWorkMs = 0;
+  let normalizedIntermediateWorkMs = 0;
+  let level = 0;
   while (current.length > maximumInputs) {
     const next: typeof current = [];
     const groups: (typeof current)[] = [];
@@ -207,13 +212,19 @@ function simulateSegmentStages(
       }
       peakIntermediateBytes = Math.max(peakIntermediateBytes, liveBytes);
       intermediateJobCount += outputs.length;
-      intermediateWorkMs += outputs.reduce((sum, item) => sum + item.durationMs, 0);
+      const waveWorkMs = outputs.reduce((sum, item) => sum + item.durationMs, 0);
+      intermediateWorkMs += waveWorkMs;
+      if (level === 0) leafIntermediateWorkMs += waveWorkMs;
+      else normalizedIntermediateWorkMs += waveWorkMs;
     }
     current = next;
+    level += 1;
   }
   return {
     intermediateJobCount,
     intermediateWorkMs,
+    leafIntermediateWorkMs,
+    normalizedIntermediateWorkMs,
     peakIntermediateBytes,
     finalIntermediateBytes: current.reduce((sum, item) => sum + item.bytes, 0),
     concurrentPartialPeakBytes,
@@ -272,6 +283,8 @@ function buildModeEstimate(
     : {
         intermediateJobCount: 0,
         intermediateWorkMs: 0,
+        leafIntermediateWorkMs: 0,
+        normalizedIntermediateWorkMs: 0,
         peakIntermediateBytes: 0,
         finalIntermediateBytes: 0,
         concurrentPartialPeakBytes: 0,
@@ -321,17 +334,27 @@ function buildModeEstimate(
       inputs.reduce((sum, input) => sum + input.durationMs, 0),
     );
   const decodeFactor = Math.max(0.75, Math.min(2.75, weightedDecode));
+  // The final filtergraph consumes the already-normalized outputs of the last
+  // reduction level, not all original clips. Counting every source again
+  // multiplies the cost of 100+ clip timelines even though they were reduced.
+  const finalInputCount = usesSegmentedPipeline ? stage.finalInputCount : inputs.length;
   const graphFactor =
-    1 + Math.max(0, inputs.length - 1) * 0.012 + inputs.filter((item) => item.isInsertion).length * 0.02;
+    1 + Math.max(0, finalInputCount - 1) * 0.012 +
+    (usesSegmentedPipeline ? 0 : inputs.filter((item) => item.isInsertion).length * 0.02);
+  const finalDecodeFactor = usesSegmentedPipeline ? 1 : decodeFactor;
   const baseRenderMs =
-    workload.expectedDurationMs * REALTIME_FACTOR[resolution][videoCodec] * decodeFactor * graphFactor;
+    workload.expectedDurationMs * REALTIME_FACTOR[resolution][videoCodec] * finalDecodeFactor * graphFactor;
   const intermediateCodec = videoCodec.endsWith("_NVENC")
     ? "H264_NVENC"
     : videoCodec.endsWith("_QSV")
       ? "H264_QSV"
       : "H264";
+  // Original decode complexity belongs only to leaf reduction jobs. Every
+  // later level decodes normalized H.264 intermediates at output resolution.
+  const stagedCodecFactor = REALTIME_FACTOR[resolution][intermediateCodec];
   const stagedRenderMs =
-    (stage.intermediateWorkMs * REALTIME_FACTOR[resolution][intermediateCodec] * Math.max(0.8, decodeFactor * 0.85)) /
+    ((stage.leafIntermediateWorkMs * Math.max(0.8, decodeFactor * 0.85) +
+      stage.normalizedIntermediateWorkMs) * stagedCodecFactor) /
       Math.max(1, boundedParallelJobs * 0.82) +
     stage.intermediateJobCount * 8_000;
   const estimatedRenderTimeMs = Math.ceil(20_000 + baseRenderMs + stagedRenderMs);
