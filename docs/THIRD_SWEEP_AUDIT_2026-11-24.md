@@ -11,10 +11,12 @@
 4. **CI FFmpeg 版本假陽性**：Windows CI 原先僅查 Chocolatey 指令成功且 PATH 有 `ffmpeg`，未確認與 8.1.2 matrix 標籤相符。現在檢查實際版本第一行；另外將 CI 權限明確設為 `contents: read`，並用 `concurrency` 自動取消同一分支或 PR 的過期測試，其他分支互不干擾。
 5. **稽核文件狀態過期**：補本報告與歷史文件註記；PR #1/#3/#4 已合併，不應繼續以草稿未合併的文字描述現在狀態。
 
+5. **字幕預覽權限殘留**：獨立字幕工作區的 `previewUrl` 是即時授權結果，不屬於可持久化資料；舊實作在儲存工作區時可能將它寫入 JSON。現在寫入時排除它，讀取舊檔時也丟棄已保存的 URL，重新確認授權才產生有效預覽連結；補充回歸測試。
+
 ## 驗證界限
 
 - **程式碼檢查**：已核對上述呼叫路徑、已有保護與回歸測試，修補範圍聚焦在可確定的錯誤。
-- **自動化測試**：新增 `tests/process-runner-drain.test.ts`、`tests/output-history-failures.test.ts`。完整 `npx vitest run`、Prettier、TypeScript、Build 與兩組 Windows FFmpeg CI，以本 PR 最新 HEAD 的實際結果為準，不預先宣稱通過。
+- **自動化測試**：新增 `tests/process-runner-drain.test.ts`、`tests/output-history-failures.test.ts`，並擴充 `tests/standalone-subtitle-store.test.ts`。完整 `npx vitest run`、Prettier、TypeScript、Build 與兩組 Windows FFmpeg CI，以本 PR 最新 HEAD 的實際結果為準，不預先宣稱通過。
 - **實機未驗收**：20 小時長片速度、跨 C:/E: 磁碟續轉、GPU 硬體路徑、YouTube 真實 OAuth/上傳、AI 真實額度、Windows 可攜封裝/啟動，以及舊使用者專案 A→B→A。這些不能由單元測試綠燈推出。
 - **保留的架構風險**：字幕 workspace JSON、SRT 和 latest pointer 為多檔提交，缺少跨斷電交易式一致性保證。未取得設計及實機測試前，不冒然合併為破壞相容性的資料格式。
 
