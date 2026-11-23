@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConcatRenderModal } from "../../src/renderer/components/ConcatRenderModal";
 
@@ -12,8 +13,7 @@ const asset = {
 } as never;
 
 const api = {
-  onConcatProgress: vi.fn(),
-  clearConcatProgressListeners: vi.fn(),
+  onConcatProgress: vi.fn(() => () => undefined),
   prepareConcatOutput: vi.fn(async () => ({ token: "t", displayPath: "C:/out.mp4", automatic: true })),
   getUserPreferences: vi.fn(async () => ({
     renderDefaults: {
@@ -311,6 +311,85 @@ describe("concat render background mode", () => {
         expect.arrayContaining([expect.objectContaining({ id: "primary", reserveBytes: 0.5 * 1024 ** 3 })]),
       ),
     );
+  });
+
+  it("rejects a soft reserve above 1024 GB", async () => {
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(<ConcatRenderModal assets={[asset]} onClose={vi.fn()} />);
+
+    const primaryReserve = await screen.findByRole("spinbutton", { name: "E:/ Soft Reserve GB" });
+    fireEvent.change(primaryReserve, { target: { value: "2000" } });
+    fireEvent.blur(primaryReserve);
+
+    expect(primaryReserve).toHaveValue(20);
+    expect(api.setRenderTempLocations).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ reserveBytes: 2000 * 1024 ** 3 })]),
+    );
+  });
+
+  it("commits subtitle font size only on blur or Enter, so typing 48 is not clamped to 24 midway", async () => {
+    const preferences = await api.getUserPreferences();
+    api.getUserPreferences.mockResolvedValueOnce({
+      ...preferences,
+      subtitleBurnInDefaults: {
+        enabled: true,
+        tracks: [
+          { language: "zh-TW", position: "BOTTOM", fontSize1080p: 48 },
+          { language: "en", position: "TOP", fontSize1080p: 30 },
+        ],
+      },
+    } as never);
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(<ConcatRenderModal assets={[asset]} purpose="CONCAT" onClose={vi.fn()} />);
+
+    const input = (await screen.findByLabelText("第 2 種字幕文字大小")) as HTMLInputElement;
+    await waitFor(() => expect(input).toHaveValue(30));
+    fireEvent.change(input, { target: { value: "4" } });
+    expect(input).toHaveValue(4);
+    expect(api.updateUserPreferences).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "48" } });
+    expect(input).toHaveValue(48);
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(api.updateUserPreferences).toHaveBeenCalledWith({
+        subtitleBurnInDefaults: expect.objectContaining({
+          tracks: [expect.anything(), expect.objectContaining({ language: "en", fontSize1080p: 48 })],
+        }),
+      }),
+    );
+    expect(api.updateUserPreferences).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        subtitleBurnInDefaults: expect.objectContaining({
+          tracks: [expect.anything(), expect.objectContaining({ fontSize1080p: 96 })],
+        }),
+      }),
+    );
+  });
+
+  it("still shows the resume offer under StrictMode's mount, cleanup, mount cycle", async () => {
+    Object.defineProperty(window, "sourceApp", {
+      configurable: true,
+      value: {
+        ...api,
+        getConcatRenderResumeOffer: vi.fn(async () => ({
+          checkpointId: "resume-strict",
+          projectId: "project-a",
+          outputPath: "E:/final.mp4",
+          mode: "LOW_MEMORY",
+          completedSegmentCount: 20,
+          totalSegmentCount: 20,
+          concatStatus: "FAILED",
+          updatedAt: "2026-09-29T00:00:00Z",
+        })),
+      },
+    });
+    render(
+      <StrictMode>
+        <ConcatRenderModal assets={[asset]} onClose={vi.fn()} />
+      </StrictMode>,
+    );
+    expect(await screen.findByRole("button", { name: "從上次進度繼續" })).toBeInTheDocument();
   });
 
   it("requires storage analysis before Resume and disables deletion of checkpoint-referenced segments", async () => {
@@ -831,10 +910,11 @@ describe("concat render background mode", () => {
     let progressListener: ((progress: Record<string, unknown>) => void) | undefined;
     (
       api.onConcatProgress as unknown as {
-        mockImplementation: (implementation: (listener: NonNullable<typeof progressListener>) => void) => void;
+        mockImplementation: (implementation: (listener: NonNullable<typeof progressListener>) => () => void) => void;
       }
     ).mockImplementation((listener) => {
       progressListener = listener;
+      return () => undefined;
     });
     let resolveRender: ((result: unknown) => void) | undefined;
     api.startConcatRender.mockImplementationOnce(
@@ -899,10 +979,11 @@ describe("concat render background mode", () => {
       let progressListener: ((progress: Record<string, unknown>) => void) | undefined;
       (
         api.onConcatProgress as unknown as {
-          mockImplementation: (implementation: (listener: NonNullable<typeof progressListener>) => void) => void;
+          mockImplementation: (implementation: (listener: NonNullable<typeof progressListener>) => () => void) => void;
         }
       ).mockImplementation((listener) => {
         progressListener = listener;
+        return () => undefined;
       });
       let rejectRender: ((reason: unknown) => void) | undefined;
       api.startConcatRender.mockImplementationOnce(

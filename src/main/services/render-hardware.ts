@@ -12,6 +12,9 @@ import { ProcessFailure, runProcess } from "./process-runner";
 
 type ProcessRunner = typeof runProcess;
 
+// Every runner call here is a short capability probe, never a real render.
+const PROBE_TIMEOUT_MS = 30_000;
+
 const ENCODERS: Array<Pick<RenderEncoderCapability, "videoCodec" | "ffmpegEncoder" | "backend" | "codec">> = [
   { videoCodec: "H264_NVENC", ffmpegEncoder: "h264_nvenc", backend: "NVIDIA_NVENC", codec: "H264" },
   { videoCodec: "H265_NVENC", ffmpegEncoder: "hevc_nvenc", backend: "NVIDIA_NVENC", codec: "H265" },
@@ -103,17 +106,21 @@ export class RenderHardwareService {
 
   private async inventory() {
     const [version, encoders, decoders, filters, gpu] = await Promise.all([
-      this.runner(this.ffmpegExecutable, ["-version"]),
-      this.runner(this.ffmpegExecutable, ["-hide_banner", "-encoders"]),
-      this.runner(this.ffmpegExecutable, ["-hide_banner", "-decoders"]),
-      this.runner(this.ffmpegExecutable, ["-hide_banner", "-filters"]),
+      this.runner(this.ffmpegExecutable, ["-version"], AbortSignal.timeout(PROBE_TIMEOUT_MS)),
+      this.runner(this.ffmpegExecutable, ["-hide_banner", "-encoders"], AbortSignal.timeout(PROBE_TIMEOUT_MS)),
+      this.runner(this.ffmpegExecutable, ["-hide_banner", "-decoders"], AbortSignal.timeout(PROBE_TIMEOUT_MS)),
+      this.runner(this.ffmpegExecutable, ["-hide_banner", "-filters"], AbortSignal.timeout(PROBE_TIMEOUT_MS)),
       process.platform === "win32"
-        ? this.runner("powershell.exe", [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "@(Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion) | ConvertTo-Json -Compress",
-          ]).catch(() => ({ stdout: "[]", stderr: "" }))
+        ? this.runner(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              "@(Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion) | ConvertTo-Json -Compress",
+            ],
+            AbortSignal.timeout(PROBE_TIMEOUT_MS),
+          ).catch(() => ({ stdout: "[]", stderr: "" }))
         : Promise.resolve({ stdout: "[]", stderr: "" }),
     ]);
     const ffmpegVersion = firstVersionLine(version.stdout || version.stderr);
@@ -135,12 +142,16 @@ export class RenderHardwareService {
   private async hasActiveFfmpeg(): Promise<boolean> {
     if (process.platform !== "win32") return false;
     try {
-      const result = await this.runner("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "if(Get-Process ffmpeg -ErrorAction SilentlyContinue){'YES'}else{'NO'}",
-      ]);
+      const result = await this.runner(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "if(Get-Process ffmpeg -ErrorAction SilentlyContinue){'YES'}else{'NO'}",
+        ],
+        AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      );
       return result.stdout.trim() === "YES";
     } catch {
       return true;
@@ -173,25 +184,29 @@ export class RenderHardwareService {
 
   private async probeEncoder(ffmpegEncoder: string): Promise<{ available: boolean; failureReason?: string }> {
     try {
-      await this.runner(this.ffmpegExecutable, [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "lavfi",
-        "-i",
-        "color=c=black:s=320x180:r=30:d=0.3",
-        "-frames:v",
-        "8",
-        "-an",
-        "-pix_fmt",
-        "nv12",
-        "-c:v",
-        ffmpegEncoder,
-        "-f",
-        "null",
-        process.platform === "win32" ? "NUL" : "/dev/null",
-      ]);
+      await this.runner(
+        this.ffmpegExecutable,
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=black:s=320x180:r=30:d=0.3",
+          "-frames:v",
+          "8",
+          "-an",
+          "-pix_fmt",
+          "nv12",
+          "-c:v",
+          ffmpegEncoder,
+          "-f",
+          "null",
+          process.platform === "win32" ? "NUL" : "/dev/null",
+        ],
+        AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      );
       return { available: true };
     } catch (error) {
       return { available: false, failureReason: compactFailure(error) || "編碼器未能實際啟動。" };
@@ -205,25 +220,29 @@ export class RenderHardwareService {
     if (backend === "CPU_SOFTWARE") return { available: true };
     const hwaccel = backend === "NVIDIA_CUDA" ? "cuda" : "qsv";
     try {
-      await this.runner(this.ffmpegExecutable, [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-hwaccel",
-        hwaccel,
-        "-hwaccel_output_format",
-        hwaccel,
-        "-i",
-        inputPath,
-        "-vf",
-        "hwdownload,format=nv12",
-        "-frames:v",
-        "4",
-        "-an",
-        "-f",
-        "null",
-        process.platform === "win32" ? "NUL" : "/dev/null",
-      ]);
+      await this.runner(
+        this.ffmpegExecutable,
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-hwaccel",
+          hwaccel,
+          "-hwaccel_output_format",
+          hwaccel,
+          "-i",
+          inputPath,
+          "-vf",
+          "hwdownload,format=nv12",
+          "-frames:v",
+          "4",
+          "-an",
+          "-f",
+          "null",
+          process.platform === "win32" ? "NUL" : "/dev/null",
+        ],
+        AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      );
       return { available: true };
     } catch (error) {
       return { available: false, failureReason: compactFailure(error) || "硬體解碼器未能實際啟動。" };
@@ -267,25 +286,29 @@ export class RenderHardwareService {
         if (!activeFfmpeg) {
           const cpuEncoder = codec === "H264" ? "libx264" : "libx265";
           try {
-            await this.runner(this.ffmpegExecutable, [
-              "-hide_banner",
-              "-loglevel",
-              "error",
-              "-f",
-              "lavfi",
-              "-i",
-              "testsrc2=s=320x180:r=30:d=0.3",
-              "-frames:v",
-              "8",
-              "-pix_fmt",
-              "yuv420p",
-              "-c:v",
-              cpuEncoder,
-              "-threads",
-              "2",
-              "-y",
-              sample,
-            ]);
+            await this.runner(
+              this.ffmpegExecutable,
+              [
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=320x180:r=30:d=0.3",
+                "-frames:v",
+                "8",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                cpuEncoder,
+                "-threads",
+                "2",
+                "-y",
+                sample,
+              ],
+              AbortSignal.timeout(PROBE_TIMEOUT_MS),
+            );
             samples.set(codec, sample);
           } catch {
             // Encoder availability already reports the actionable failure.

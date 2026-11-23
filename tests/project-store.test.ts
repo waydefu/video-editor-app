@@ -291,6 +291,110 @@ describe("ProjectStore", () => {
     expect(JSON.parse(await readFile(manifestPath, "utf8")).schemaVersion).toBe(21);
   });
 
+  function legacyManifest(root: string, extra: Record<string, unknown> = {}) {
+    return {
+      schemaVersion: 1,
+      id: "legacy",
+      name: "舊專案",
+      sourcePolicy: "READ_ONLY",
+      previewPolicy: "DERIVED_CACHE_ONLY_NOT_MASTER",
+      previewerVersion: "preview-v1",
+      sortMode: "ADDED_ORDER",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sources: [asset(path.join(root, "舊 來源.mp4"))],
+      ...extra,
+    };
+  }
+  const publishAssets = {
+    schemaVersion: 1,
+    topicSnapshot: { topic: "河內街景" },
+    titles: [{ id: "t1", text: "河內一日遊", reason: "測試" }],
+    description: "說明",
+    englishSummary: "summary",
+    hashtags: ["#hanoi"],
+    thumbnails: [],
+    chapters: [],
+    provider: "LOCAL_FALLBACK",
+    analyzerVersion: "test",
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    mainTimelineRevision: 0,
+    stale: false,
+    userEdited: false,
+  };
+
+  it("keeps well-formed aiPublishAssets when loading a project", async () => {
+    const root = await tempRoot();
+    const manifestPath = path.join(root, "projects", "default", "project.source-manifest.json");
+    await mkdir(path.dirname(manifestPath), { recursive: true });
+    await writeFile(manifestPath, JSON.stringify(legacyManifest(root, { aiPublishAssets: publishAssets })), "utf8");
+    const loaded = await new ProjectStore(root).initialize();
+    expect(loaded.aiPublishAssets).toEqual(publishAssets);
+  });
+
+  it("drops malformed aiPublishAssets on load but still loads the rest of the project", async () => {
+    const root = await tempRoot();
+    const manifestPath = path.join(root, "projects", "default", "project.source-manifest.json");
+    await mkdir(path.dirname(manifestPath), { recursive: true });
+    await writeFile(
+      manifestPath,
+      JSON.stringify(legacyManifest(root, { aiPublishAssets: { ...publishAssets, titles: "not-an-array" } })),
+      "utf8",
+    );
+    const loaded = await new ProjectStore(root).initialize();
+    expect(loaded.aiPublishAssets).toBeUndefined();
+    expect(loaded).toMatchObject({ id: "legacy", name: "舊專案" });
+    expect(loaded.sources).toHaveLength(1);
+  });
+
+  it("backs up an old-schema manifest and project file once per old version, byte for byte", async () => {
+    const root = await tempRoot();
+    const manifestPath = path.join(root, "projects", "default", "project.source-manifest.json");
+    await mkdir(path.dirname(manifestPath), { recursive: true });
+    const manifestBytes = JSON.stringify(legacyManifest(root));
+    await writeFile(manifestPath, manifestBytes, "utf8");
+    const projectPath = path.join(root, "舊專案.swproj");
+    const projectBytes = JSON.stringify({ ...legacyManifest(root), schemaVersion: 5, id: "v5-project" });
+    await writeFile(projectPath, projectBytes, "utf8");
+
+    const store = new ProjectStore(root);
+    await store.initialize();
+    const firstOpen = await store.openProject(projectPath);
+    expect(firstOpen.backupNotice).toContain(".swproj.bak-v5");
+    await store.saveProject();
+    expect(await readFile(`${manifestPath}.bak-v1`, "utf8")).toBe(manifestBytes);
+    expect(await readFile(`${projectPath}.bak-v5`, "utf8")).toBe(projectBytes);
+    expect(JSON.parse(await readFile(projectPath, "utf8")).schemaVersion).toBe(21);
+
+    // Loading again (now schema 21) must not create or overwrite backups.
+    await new ProjectStore(root).initialize();
+    const secondOpen = await new ProjectStore(root).openProject(projectPath);
+    expect(secondOpen.backupNotice).toBeUndefined();
+    expect(await readFile(`${manifestPath}.bak-v1`, "utf8")).toBe(manifestBytes);
+    expect(await readFile(`${projectPath}.bak-v5`, "utf8")).toBe(projectBytes);
+    expect((await readdir(path.dirname(manifestPath))).filter((name) => name.includes(".bak-"))).toEqual([
+      "project.source-manifest.json.bak-v1",
+    ]);
+
+    // A pre-existing backup for the same version is never overwritten.
+    await writeFile(projectPath, JSON.stringify({ ...legacyManifest(root), schemaVersion: 5, id: "second" }), "utf8");
+    const thirdOpen = await new ProjectStore(root).openProject(projectPath);
+    expect(thirdOpen.backupNotice).toBeUndefined();
+    expect(await readFile(`${projectPath}.bak-v5`, "utf8")).toBe(projectBytes);
+  });
+
+  it("does not back up when only previewerVersion changes", async () => {
+    const root = await tempRoot();
+    const store = new ProjectStore(root);
+    await store.initialize();
+    const manifestPath = store.manifestPath;
+    const current = JSON.parse(await readFile(manifestPath, "utf8"));
+    await writeFile(manifestPath, JSON.stringify({ ...current, previewerVersion: "preview-old" }), "utf8");
+    await new ProjectStore(root).initialize();
+    expect(JSON.parse(await readFile(manifestPath, "utf8")).previewerVersion).not.toBe("preview-old");
+    expect((await readdir(path.dirname(manifestPath))).filter((name) => name.includes(".bak-"))).toEqual([]);
+  });
+
   it("migrates schema 2 to schema 10 and preserves every existing edit field", async () => {
     const root = await tempRoot();
     const manifestPath = path.join(root, "projects", "default", "project.source-manifest.json");

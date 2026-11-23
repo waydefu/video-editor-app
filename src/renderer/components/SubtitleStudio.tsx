@@ -376,7 +376,7 @@ export function SubtitleStudio({ project, timelineDurationMs, onProjectUpdated, 
 
   useEffect(() => {
     window.sourceApp.onAiAnalysisProgress(setProgress);
-    window.sourceApp.onSubtitlePreviewProgress(setPreviewProgress);
+    const offPreviewProgress = window.sourceApp.onSubtitlePreviewProgress(setPreviewProgress);
     window.sourceApp.onSubtitleVisualAnalysisProgress?.(setVisualProgress);
     void window.sourceApp
       .getUserPreferences()
@@ -388,7 +388,7 @@ export function SubtitleStudio({ project, timelineDurationMs, onProjectUpdated, 
       .catch(() => undefined);
     return () => {
       window.sourceApp.clearAiAnalysisProgressListeners();
-      window.sourceApp.clearSubtitlePreviewProgressListeners();
+      offPreviewProgress();
       window.sourceApp.clearSubtitleVisualAnalysisProgressListeners?.();
     };
   }, []);

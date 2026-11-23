@@ -828,6 +828,8 @@ export function runFfmpegWithProgress(
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    // FFmpeg may already have exited when we send "q"; the resulting EPIPE is an async stdin error and is harmless.
+    child.stdin.on("error", () => {});
     let stdoutBuffer = "";
     let stderr = "";
     let outTimeMs = 0;

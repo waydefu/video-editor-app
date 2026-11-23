@@ -77,7 +77,11 @@ async function windowsMemory(ffmpegPids: number[] = []): Promise<WindowsMemoryJs
     "$result|ConvertTo-Json -Compress",
   ].join(";");
   try {
-    const result = await runProcess("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+    const result = await runProcess(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      AbortSignal.timeout(30_000),
+    );
     return JSON.parse(result.stdout.trim()) as WindowsMemoryJson;
   } catch {
     return undefined;

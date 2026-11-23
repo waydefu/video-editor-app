@@ -274,14 +274,14 @@ export function IntroStudio({ project, videos, onClose, onProjectUpdated, onOpen
 
   useEffect(() => {
     window.sourceApp.onIntroAnalysisProgress(setProgress);
-    window.sourceApp.onSubtitlePreviewProgress(setBgmPreviewProgress);
+    const offPreviewProgress = window.sourceApp.onSubtitlePreviewProgress(setBgmPreviewProgress);
     void window.sourceApp
       .getUserPreferences()
       .then((preferences) => setIncludeBgmPreview(preferences.renderDefaults.introPreviewIncludeBgm))
       .catch(() => undefined);
     return () => {
       window.sourceApp.clearIntroAnalysisProgressListeners();
-      window.sourceApp.clearSubtitlePreviewProgressListeners();
+      offPreviewProgress();
     };
   }, []);
 

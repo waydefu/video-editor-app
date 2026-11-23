@@ -20,9 +20,8 @@ describe("SubtitleStudio visual analysis controls", () => {
     const startSubtitleVisualAnalysis = vi.fn(async () => undefined);
     const api = {
       onAiAnalysisProgress: vi.fn(),
-      onSubtitlePreviewProgress: vi.fn(),
+      onSubtitlePreviewProgress: vi.fn(() => () => undefined),
       clearAiAnalysisProgressListeners: vi.fn(),
-      clearSubtitlePreviewProgressListeners: vi.fn(),
       getUserPreferences: vi.fn(async () => ({
         subtitleGenerationScope: { intro: false, main: true },
         subtitlePreviewStyle: {
@@ -126,9 +125,8 @@ describe("SubtitleStudio visual analysis controls", () => {
     const onProjectUpdated = vi.fn();
     const api = {
       onAiAnalysisProgress: vi.fn(),
-      onSubtitlePreviewProgress: vi.fn(),
+      onSubtitlePreviewProgress: vi.fn(() => () => undefined),
       clearAiAnalysisProgressListeners: vi.fn(),
-      clearSubtitlePreviewProgressListeners: vi.fn(),
       getUserPreferences: vi.fn(async () => ({
         subtitleGenerationScope: { intro: false, main: true },
         subtitlePreviewStyle: {
@@ -196,9 +194,8 @@ describe("SubtitleStudio visual analysis controls", () => {
     const onProjectUpdated = vi.fn();
     const api = {
       onAiAnalysisProgress: vi.fn(),
-      onSubtitlePreviewProgress: vi.fn(),
+      onSubtitlePreviewProgress: vi.fn(() => () => undefined),
       clearAiAnalysisProgressListeners: vi.fn(),
-      clearSubtitlePreviewProgressListeners: vi.fn(),
       getUserPreferences: vi.fn(async () => ({
         subtitleGenerationScope: { intro: false, main: true },
         subtitlePreviewStyle: {
@@ -268,9 +265,8 @@ describe("SubtitleStudio visual analysis controls", () => {
     const cancel = vi.fn(async () => undefined);
     const api = {
       onAiAnalysisProgress: vi.fn(),
-      onSubtitlePreviewProgress: vi.fn(),
+      onSubtitlePreviewProgress: vi.fn(() => () => undefined),
       clearAiAnalysisProgressListeners: vi.fn(),
-      clearSubtitlePreviewProgressListeners: vi.fn(),
       getUserPreferences: vi.fn(async () => ({
         subtitleGenerationScope: { intro: false, main: true },
         subtitlePreviewStyle: {

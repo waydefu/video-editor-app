@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DEFAULT_BGM_VOLUME_PERCENT,
@@ -226,11 +227,49 @@ function normalizeZoomEnhancementPreset(value: unknown): ZoomEnhancementPreset {
     : DEFAULT_ZOOM_ENHANCEMENT_PRESET;
 }
 
+// Shape-only check for loaded data; the full business-rule validation lives in setAiPublishAssets and needs the live project.
+function isAiPublishAssetsShape(value: unknown): value is AiPublishAssets {
+  if (!value || typeof value !== "object") return false;
+  const assets = value as Record<string, unknown>;
+  const topic = assets.topicSnapshot as Record<string, unknown> | null | undefined;
+  return (
+    Array.isArray(assets.titles) &&
+    assets.titles.every(
+      (title) => !!title && typeof title === "object" && typeof (title as { text?: unknown }).text === "string",
+    ) &&
+    Array.isArray(assets.thumbnails) &&
+    Array.isArray(assets.chapters) &&
+    Array.isArray(assets.hashtags) &&
+    typeof assets.description === "string" &&
+    !!topic &&
+    typeof topic === "object" &&
+    typeof topic.topic === "string"
+  );
+}
+
+// Best effort: keep one untouched copy of a file per old schema version before it is rewritten by a migration.
+async function backupBeforeMigration(filePath: string, oldSchemaVersion: unknown): Promise<string | undefined> {
+  if (
+    typeof oldSchemaVersion !== "number" ||
+    !Number.isFinite(oldSchemaVersion) ||
+    oldSchemaVersion === MANIFEST_SCHEMA_VERSION
+  )
+    return undefined;
+  const backupPath = `${filePath}.bak-v${oldSchemaVersion}`;
+  try {
+    await copyFile(filePath, backupPath, constants.COPYFILE_EXCL);
+    return backupPath;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+    console.warn(`[project-store] 無法備份舊版專案檔：${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
 function migrateProject(raw: Record<string, unknown>): ProjectManifest {
-  const aiPublishAssets =
-    raw.aiPublishAssets && typeof raw.aiPublishAssets === "object"
-      ? structuredClone(raw.aiPublishAssets as AiPublishAssets)
-      : undefined;
+  const aiPublishAssets = isAiPublishAssetsShape(raw.aiPublishAssets)
+    ? structuredClone(raw.aiPublishAssets)
+    : undefined;
   const sources = (raw.sources as SourceAsset[]).map((asset) => ({
     ...asset,
     mainAudioGates: normalizeAudioTrackGates(asset.mainAudioGates),
@@ -466,7 +505,8 @@ function migrateProject(raw: Record<string, unknown>): ProjectManifest {
     bgmTracks,
     sourceAudioVolumePercent,
     aiStoryContext: normalizeAiStoryContext(raw.aiStoryContext),
-    ...(aiPublishAssets ? { aiPublishAssets } : {}),
+    // Explicit key so a malformed value from ...raw is dropped rather than kept.
+    aiPublishAssets,
     subtitleCues: Array.isArray(raw.subtitleCues)
       ? (raw.subtitleCues as SubtitleCue[]).map((cue) => ({
           ...cue,
@@ -542,6 +582,7 @@ export class ProjectStore {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.manifestPath, "utf8"));
       if (!looksLikeProject(parsed)) throw new Error("manifest schema 不相容");
+      await backupBeforeMigration(this.manifestPath, parsed.schemaVersion);
       const migrated =
         parsed.schemaVersion !== MANIFEST_SCHEMA_VERSION ||
         parsed.previewerVersion !== PREVIEWER_VERSION ||
@@ -578,7 +619,7 @@ export class ProjectStore {
       const session = JSON.parse(await readFile(this.sessionPath, "utf8")) as { filePath?: unknown };
       if (typeof session.filePath === "string" && session.filePath.trim()) {
         const resolved = path.resolve(session.filePath);
-        const opened = await this.readProjectFile(resolved);
+        const { project: opened } = await this.readProjectFile(resolved);
         this.current = opened;
         this.activeProjectPath = resolved;
         await this.writeProjectFile(this.manifestPath, opened);
@@ -656,8 +697,11 @@ export class ProjectStore {
 
   async openProject(filePath: string): Promise<ProjectFileResult> {
     const resolved = path.resolve(filePath);
+    let backupPath: string | undefined;
     const project = await this.queueProjectFileOperation(async () => {
-      const opened = await this.readProjectFile(resolved);
+      const read = await this.readProjectFile(resolved);
+      const opened = read.project;
+      backupPath = read.backupPath;
       await this.writeProjectFile(this.manifestPath, opened);
       await this.writeSessionPointer(resolved);
       const previous = this.getProject();
@@ -675,7 +719,15 @@ export class ProjectStore {
       ]);
       return this.getProject();
     });
-    return { project, filePath: resolved };
+    return {
+      project,
+      filePath: resolved,
+      ...(backupPath
+        ? {
+            backupNotice: `已為升級前的專案保留備份：${path.basename(backupPath)}。確認專案一切正常後，可自行刪除這個備份檔。`,
+          }
+        : {}),
+    };
   }
 
   async addAssets(assets: SourceAsset[]): Promise<ProjectManifest> {
@@ -1783,7 +1835,7 @@ export class ProjectStore {
     return result;
   }
 
-  private async readProjectFile(filePath: string): Promise<ProjectManifest> {
+  private async readProjectFile(filePath: string): Promise<{ project: ProjectManifest; backupPath?: string }> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(await readFile(filePath, "utf8"));
@@ -1792,7 +1844,8 @@ export class ProjectStore {
       throw new Error(`無法讀取專案檔：${error instanceof Error ? error.message : String(error)}`);
     }
     if (!looksLikeProject(parsed)) throw new Error("專案檔格式或 schema 不相容；目前專案未變更。");
-    return migrateProject(parsed);
+    const backupPath = await backupBeforeMigration(filePath, parsed.schemaVersion);
+    return { project: migrateProject(parsed), ...(backupPath ? { backupPath } : {}) };
   }
 
   private async persistProject(project: ProjectManifest, explicitPath = this.activeProjectPath): Promise<void> {

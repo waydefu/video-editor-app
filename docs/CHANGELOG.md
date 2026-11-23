@@ -1,5 +1,9 @@
 # SceneryWalker 素材整理 App 變更紀錄
 
+## 未發布 — 舊專案升級前自動備份
+
+- 開啟或載入 schema 版本較舊的專案時，會在覆寫前建立 `<專案檔>.bak-v<舊版本>` 備份（App 內預設 manifest 同理），每個舊版本只留一份、不覆蓋既有備份；備份失敗不會阻擋開啟或儲存。確認專案一切正常後，可自行刪除這些備份檔。
+
 ## v0.88.0 — 連續字幕 Review 與逐筆 AI 提案（2026-10-03）
 
 - 字幕 Review 改為左側獨立清單、右側固定 Preview；Project clock 驅動跨影片／照片接續、精確 SRT overlay 與 active row，編輯／保存不再隱式 seek。

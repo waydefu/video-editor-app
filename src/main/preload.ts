@@ -333,9 +333,12 @@ const api: AppApi & {
   },
   clearImportProgressListeners: () => ipcRenderer.removeAllListeners("import:progress"),
   onConcatProgress: (callback: (progress: ConcatRenderProgress) => void) => {
-    ipcRenderer.on("concat:progress", (_event, progress: ConcatRenderProgress) => callback(progress));
+    const handler = (_event: Electron.IpcRendererEvent, progress: ConcatRenderProgress) => callback(progress);
+    ipcRenderer.on("concat:progress", handler);
+    return () => {
+      ipcRenderer.removeListener("concat:progress", handler);
+    };
   },
-  clearConcatProgressListeners: () => ipcRenderer.removeAllListeners("concat:progress"),
   onIntroAnalysisProgress: (callback: (progress: IntroAnalysisProgress) => void) => {
     ipcRenderer.on("intro:analysis-progress", (_event, progress: IntroAnalysisProgress) => callback(progress));
   },
@@ -345,9 +348,12 @@ const api: AppApi & {
   },
   clearAiAnalysisProgressListeners: () => ipcRenderer.removeAllListeners("ai:analysis-progress"),
   onSubtitlePreviewProgress: (callback: (progress: ConcatRenderProgress) => void) => {
-    ipcRenderer.on("subtitle:preview-progress", (_event, progress: ConcatRenderProgress) => callback(progress));
+    const handler = (_event: Electron.IpcRendererEvent, progress: ConcatRenderProgress) => callback(progress);
+    ipcRenderer.on("subtitle:preview-progress", handler);
+    return () => {
+      ipcRenderer.removeListener("subtitle:preview-progress", handler);
+    };
   },
-  clearSubtitlePreviewProgressListeners: () => ipcRenderer.removeAllListeners("subtitle:preview-progress"),
   onYoutubeUploadProgress: (callback: (progress: YoutubeUploadProgress) => void) => {
     ipcRenderer.on("youtube:upload-progress", (_event, progress: YoutubeUploadProgress) => callback(progress));
   },

@@ -33,9 +33,8 @@ function setup(cues: SubtitleCue[]) {
   const api = {
     setSubtitleCues,
     onAiAnalysisProgress: vi.fn(),
-    onSubtitlePreviewProgress: vi.fn(),
+    onSubtitlePreviewProgress: vi.fn(() => () => undefined),
     clearAiAnalysisProgressListeners: vi.fn(),
-    clearSubtitlePreviewProgressListeners: vi.fn(),
     getUserPreferences: vi.fn(async () => ({
       subtitleGenerationScope: { intro: false, main: true },
       subtitlePreviewStyle: {
@@ -80,9 +79,8 @@ describe("SubtitleStudio AI visual draft review tools", () => {
       configurable: true,
       value: {
         onAiAnalysisProgress: vi.fn(),
-        onSubtitlePreviewProgress: vi.fn(),
+        onSubtitlePreviewProgress: vi.fn(() => () => undefined),
         clearAiAnalysisProgressListeners: vi.fn(),
-        clearSubtitlePreviewProgressListeners: vi.fn(),
         getUserPreferences: vi.fn(async () => ({
           subtitleGenerationScope: { intro: false, main: true },
           subtitlePreviewStyle: {

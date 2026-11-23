@@ -242,7 +242,7 @@ export function registerIpc(
       .then(() =>
         appendFile(subtitleLogPath, `${new Date().toISOString()} [${stage}] ${JSON.stringify(data)}\n`, "utf8"),
       )
-      .catch(() => undefined);
+      .catch((error: unknown) => console.warn("[ipc] 無法寫入字幕除錯記錄。", error));
   };
   const subtitleVideoProbe = new MediaProbe();
   const subtitleFrameExtractor = new SubtitleFrameExtractor();
@@ -1831,7 +1831,7 @@ export function registerIpc(
     const pending = pendingEvidenceFrames.get(key);
     if (pending) return pending;
     const job = evidenceFrameQueue
-      .catch(() => undefined)
+      .catch((error: unknown) => console.warn("[ipc] 前一個證據畫面擷取失敗。", error))
       .then(async () => {
         let image = "";
         await subtitleFrameExtractor.extractBatches(
