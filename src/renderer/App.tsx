@@ -511,7 +511,9 @@ export function App() {
       closeProjectViews();
       setProject(result.project);
       setProjectFilePath(result.filePath);
-      setNotice(`已開啟專案「${result.project.name}」；來源檔仍以唯讀引用。`);
+      setNotice(
+        `已開啟專案「${result.project.name}」；來源檔仍以唯讀引用。${result.backupNotice ? ` ${result.backupNotice}` : ""}`,
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {

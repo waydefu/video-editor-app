@@ -721,14 +721,12 @@ function mockApi(initialProject: ProjectManifest = project): AppApi {
     })),
     onImportProgress: vi.fn(),
     clearImportProgressListeners: vi.fn(),
-    onConcatProgress: vi.fn(),
-    clearConcatProgressListeners: vi.fn(),
+    onConcatProgress: vi.fn(() => () => undefined),
     onIntroAnalysisProgress: vi.fn(),
     clearIntroAnalysisProgressListeners: vi.fn(),
     onAiAnalysisProgress: vi.fn(),
     clearAiAnalysisProgressListeners: vi.fn(),
-    onSubtitlePreviewProgress: vi.fn(),
-    clearSubtitlePreviewProgressListeners: vi.fn(),
+    onSubtitlePreviewProgress: vi.fn(() => () => undefined),
     onYoutubeUploadProgress: vi.fn(),
     clearYoutubeUploadProgressListeners: vi.fn(),
   };
@@ -1528,6 +1526,8 @@ describe("App source workflow", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /加入第二種語言/ }));
     fireEvent.change(within(dialog).getByLabelText("第 2 種字幕語言"), { target: { value: "en" } });
     fireEvent.change(within(dialog).getByLabelText("第 1 種字幕文字大小"), { target: { value: "56" } });
+    // Font size now commits on blur/Enter instead of on every keystroke.
+    fireEvent.blur(within(dialog).getByLabelText("第 1 種字幕文字大小"));
     expect(within(dialog).queryByRole("button", { name: /加入第二種語言/ })).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: /選擇儲存位置/ }));
     const renderButton = within(dialog).getByRole("button", { name: "OK，開始產出" });

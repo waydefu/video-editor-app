@@ -1384,7 +1384,10 @@ export class RenderCheckpointStore {
     }
     const ownedRoots = this.validatedOwnedWorkRoots(record);
     await Promise.all(ownedRoots.map((root) => rm(root, { recursive: true, force: true })));
-    await rm(record.diagnosticLogPath, { force: true });
+    // A tampered record must not make us delete files outside the checkpoint root.
+    const relativeLog = path.relative(path.resolve(this.root), path.resolve(record.diagnosticLogPath));
+    if (relativeLog && !relativeLog.startsWith("..") && !path.isAbsolute(relativeLog))
+      await rm(record.diagnosticLogPath, { force: true });
     await rm(this.recordPathFor(record), { force: true });
   }
 

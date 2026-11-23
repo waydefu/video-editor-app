@@ -410,7 +410,7 @@ export function ConcatRenderModal({
   };
 
   useEffect(() => {
-    window.sourceApp.onConcatProgress((next) => {
+    const offConcatProgress = window.sourceApp.onConcatProgress((next) => {
       timingSnapshotReceivedAtRef.current = performance.now();
       setProgress(next);
       setTimingTick(timingSnapshotReceivedAtRef.current);
@@ -498,15 +498,16 @@ export function ConcatRenderModal({
         }
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)));
-    return () => window.sourceApp.clearConcatProgressListeners();
+    return () => offConcatProgress();
   }, [initialResolution, introClips?.length, isClip, isIntro, isMain, isYoutubeEligible, projectName]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode runs mount, cleanup, mount; re-arm the flag so it is not left false.
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     if (!rendering || progress?.timingStatus !== "RUNNING") return;
@@ -542,7 +543,9 @@ export function ConcatRenderModal({
             });
           }
         })
-        .catch(() => undefined);
+        .catch(() => {
+          if (mountedRef.current) setBackgroundNotice("無法取得背景轉檔狀態。");
+        });
     }
     const onJobs = window.sourceApp.onBackgroundJobs;
     if (!onJobs) return;
@@ -623,6 +626,21 @@ export function ConcatRenderModal({
     const next = { ...bgmScopes, ...patch };
     setBgmScopes(next);
     rememberRenderDefaults({ mainBgmScopes: next });
+  };
+
+  const subtitleFontSizeFor = (index: number) =>
+    index === 0
+      ? (subtitleBurnIn.styleProfile?.fontSizePx ?? DEFAULT_SUBTITLE_STYLE_PROFILE.fontSizePx)
+      : (subtitleBurnIn.tracks[index]?.fontSize1080p ?? 24);
+
+  // Called on blur/Enter only: clamp the typed draft, show the clamped value, and commit it if it changed.
+  const commitSubtitleFontSize = (index: number, input: HTMLInputElement) => {
+    const [min, max] = index === 0 ? [16, 72] : [24, 96];
+    const clamped = Math.max(min, Math.min(max, Math.round(Number(input.value)) || min));
+    input.value = String(clamped);
+    if (clamped === subtitleFontSizeFor(index)) return;
+    if (index === 0) updatePrimarySubtitlePreviewSize(clamped);
+    else patchSubtitleTrack(index, { fontSize1080p: clamped });
   };
 
   const updatePrimarySubtitlePreviewSize = (fontSizePx: number) => {
@@ -786,7 +804,7 @@ export function ConcatRenderModal({
 
   const changeTempReserve = (id: string, value: string) => {
     const reserveGiB = Number(value);
-    if (!Number.isFinite(reserveGiB) || reserveGiB < 0) return;
+    if (!Number.isFinite(reserveGiB) || reserveGiB < 0 || reserveGiB > 1024) return;
     const next = tempLocations.map((item) =>
       item.id === id ? { ...item, reserveBytes: Math.round(reserveGiB * GIB) } : item,
     );
@@ -3061,21 +3079,12 @@ export function ConcatRenderModal({
                               min={index === 0 ? "16" : "24"}
                               max={index === 0 ? "72" : "96"}
                               step="1"
-                              value={
-                                index === 0
-                                  ? (subtitleBurnIn.styleProfile?.fontSizePx ??
-                                    DEFAULT_SUBTITLE_STYLE_PROFILE.fontSizePx)
-                                  : track.fontSize1080p
-                              }
-                              onChange={(event) => {
-                                const value = Number(event.target.value);
-                                if (index === 0) {
-                                  updatePrimarySubtitlePreviewSize(value);
-                                  return;
-                                }
-                                patchSubtitleTrack(index, {
-                                  fontSize1080p: Math.max(24, Math.min(96, value || 24)),
-                                });
+                              // Uncontrolled draft: clamping on every keystroke would turn "4" into 24 before "8" is typed.
+                              key={`${index}-${subtitleFontSizeFor(index)}`}
+                              defaultValue={subtitleFontSizeFor(index)}
+                              onBlur={(event) => commitSubtitleFontSize(index, event.currentTarget)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") commitSubtitleFontSize(index, event.currentTarget);
                               }}
                             />
                             <span>px</span>
@@ -3332,7 +3341,7 @@ export function ConcatRenderModal({
                               value={((location.reserveBytes ?? defaultTempReserveBytes(location)) / GIB).toString()}
                               onChange={(event) => {
                                 const reserveGiB = Number(event.target.value);
-                                if (!Number.isFinite(reserveGiB) || reserveGiB < 0) return;
+                                if (!Number.isFinite(reserveGiB) || reserveGiB < 0 || reserveGiB > 1024) return;
                                 setTempLocations((current) =>
                                   current.map((item) =>
                                     item.id === location.id

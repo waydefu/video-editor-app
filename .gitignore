@@ -12,3 +12,11 @@ artifacts/
 .DS_Store
 Thumbs.db
 .serena/
+
+# 本機機密與設定檔，避免誤提交
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.claude/settings.local.json

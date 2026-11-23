@@ -11,12 +11,15 @@ export class ProcessFailure extends Error {
   }
 }
 
+const DEFAULT_MAX_STDOUT_BYTES = 16 * 1024 * 1024;
+
 export function runProcess(
   executable: string,
   args: string[],
   signal?: AbortSignal,
-  options: { cwd?: string; input?: string } = {},
+  options: { cwd?: string; input?: string; maxStdoutBytes?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
+  const maxStdoutBytes = options.maxStdoutBytes ?? DEFAULT_MAX_STDOUT_BYTES;
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new DOMException("工作已取消。", "AbortError"));
@@ -36,13 +39,25 @@ export function runProcess(
     const stderrStream = child.stderr!;
     stdoutStream.setEncoding("utf8");
     stderrStream.setEncoding("utf8");
-    stdoutStream.on("data", (chunk) => {
+    let stdoutBytes = 0;
+    let overflowed = false;
+    stdoutStream.on("data", (chunk: string) => {
+      if (overflowed) return;
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes > maxStdoutBytes) {
+        overflowed = true;
+        stdout = "";
+        child.kill();
+        return;
+      }
       stdout += chunk;
     });
     stderrStream.on("data", (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-16_000);
     });
     if (options.input !== undefined && child.stdin) {
+      // The child may exit before reading its input; EPIPE then surfaces as an async stdin error.
+      child.stdin.on("error", () => {});
       child.stdin.end(options.input, "utf8");
     }
 
@@ -57,6 +72,8 @@ export function runProcess(
       signal?.removeEventListener("abort", onAbort);
       if (signal?.aborted) {
         reject(new DOMException("工作已取消。", "AbortError"));
+      } else if (overflowed) {
+        reject(new ProcessFailure("媒體工具輸出過大。", null, stderr));
       } else if (code === 0) {
         resolve({ stdout, stderr });
       } else {

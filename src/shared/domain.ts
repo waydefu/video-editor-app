@@ -1273,6 +1273,8 @@ export interface ImageDurationUpdateResult {
 export interface ProjectFileResult {
   project: ProjectManifest;
   filePath: string;
+  /** Set only when opening this file just created a pre-upgrade backup copy. */
+  backupNotice?: string;
 }
 
 export interface ProjectFileState {
@@ -2543,14 +2545,14 @@ export interface AppApi {
   openPlatformPortal(platform: BrowserUploadPlatform): Promise<PlatformPortalResult>;
   onImportProgress(callback: (progress: ImportProgress) => void): void;
   clearImportProgressListeners(): void;
-  onConcatProgress(callback: (progress: ConcatRenderProgress) => void): void;
-  clearConcatProgressListeners(): void;
+  /** 訂閱串連進度；回傳只移除這個 callback 的取消函式。 */
+  onConcatProgress(callback: (progress: ConcatRenderProgress) => void): () => void;
   onIntroAnalysisProgress(callback: (progress: IntroAnalysisProgress) => void): void;
   clearIntroAnalysisProgressListeners(): void;
   onAiAnalysisProgress(callback: (progress: AiAnalysisProgress) => void): void;
   clearAiAnalysisProgressListeners(): void;
-  onSubtitlePreviewProgress(callback: (progress: ConcatRenderProgress) => void): void;
-  clearSubtitlePreviewProgressListeners(): void;
+  /** 訂閱字幕預覽進度；回傳只移除這個 callback 的取消函式。 */
+  onSubtitlePreviewProgress(callback: (progress: ConcatRenderProgress) => void): () => void;
   onYoutubeUploadProgress(callback: (progress: YoutubeUploadProgress) => void): void;
   clearYoutubeUploadProgressListeners(): void;
 }

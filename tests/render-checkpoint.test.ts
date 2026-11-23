@@ -201,6 +201,29 @@ describe("persistent render checkpoint", () => {
     await expect(stat(checkpoint.workRoot)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("does not delete a diagnostic log path that a tampered record points outside its root", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "render-checkpoint-tampered-log-"));
+    roots.push(root);
+    const outsideFile = path.join(root, "outside-the-state-root.log");
+    await writeFile(outsideFile, "keep me");
+    const store = new RenderCheckpointStore(path.join(root, "state"));
+    const checkpoint = await store.create(
+      "01234567-abcd-4def-8123-0123456789ab",
+      "2026-09-13T00:00:00.000Z",
+      "signature",
+      "LOW_MEMORY",
+      path.join(root, "out.mp4"),
+      request(),
+    );
+    checkpoint.diagnosticLogPath = outsideFile;
+    await store.save(checkpoint);
+
+    await store.discard(checkpoint.projectId, checkpoint.checkpointId);
+
+    expect(await readFile(outsideFile, "utf8")).toBe("keep me");
+    expect(await store.offer(checkpoint.projectId)).toBeUndefined();
+  });
+
   it("removes a completed v0.80 checkpoint without recreating an offer", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "render-checkpoint-complete-"));
     roots.push(root);

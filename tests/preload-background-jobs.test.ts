@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BackgroundJobSnapshot } from "../src/shared/domain";
+import type { BackgroundJobSnapshot, ConcatRenderProgress } from "../src/shared/domain";
 
 const { bus, exposed } = vi.hoisted(() => ({
   bus: { emitter: undefined as unknown as import("node:events").EventEmitter },
@@ -43,5 +43,29 @@ describe("preload background job subscriptions", () => {
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledTimes(2);
     expect(bus.emitter.listenerCount("background:jobs")).toBe(1);
+  });
+
+  it.each([
+    ["onConcatProgress", "concat:progress"],
+    ["onSubtitlePreviewProgress", "subtitle:preview-progress"],
+  ])("%s: unsubscribing one subscriber keeps the other receiving updates", async (method, channel) => {
+    await import("../src/main/preload");
+    const api = exposed.sourceApp as Record<string, (callback: (progress: ConcatRenderProgress) => void) => () => void>;
+    const before = bus.emitter.listenerCount(channel);
+    const first = vi.fn();
+    const second = vi.fn();
+    const offFirst = api[method](first);
+    api[method](second);
+    const progress = { phase: "RENDERING", percent: 10 } as ConcatRenderProgress;
+
+    bus.emitter.emit(channel, {}, progress);
+    expect(first).toHaveBeenCalledWith(progress);
+    expect(second).toHaveBeenCalledWith(progress);
+
+    offFirst();
+    bus.emitter.emit(channel, {}, progress);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(2);
+    expect(bus.emitter.listenerCount(channel)).toBe(before + 1);
   });
 });
