@@ -125,7 +125,10 @@ export class StandaloneSubtitleStore {
     }
     workspace.cues = sorted;
     // Never store a transient source-media authorization in the workspace JSON.
-    await this.atomic(this.workspacePath(workspace.id), JSON.stringify({ ...workspace, previewUrl: undefined }, null, 2));
+    await this.atomic(
+      this.workspacePath(workspace.id),
+      JSON.stringify({ ...workspace, previewUrl: undefined }, null, 2),
+    );
     await this.atomic(workspace.draftPath, sorted.length ? serializeSrt(sorted) : "");
     await this.atomic(this.latestPointerPath(workspace.ownerProjectId), JSON.stringify({ id: workspace.id }));
     workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
