@@ -65,4 +65,23 @@ describe("voice input button", () => {
     expect(stopTrack).toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith("");
   });
+
+  it("ignores a second click while microphone permission is still pending", async () => {
+    let resolveStream: (stream: MediaStream) => void = () => undefined;
+    const getUserMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          resolveStream = resolve;
+        }),
+    );
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    render(<VoiceInputButton language="zh-TW" onTranscript={vi.fn()} onError={vi.fn()} />);
+    const button = screen.getByRole("button", { name: "繁體中文語音輸入" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    resolveStream({ getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream);
+    expect(await screen.findByRole("button", { name: "停止錄音並辨識文字" })).toBeInTheDocument();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+  });
 });

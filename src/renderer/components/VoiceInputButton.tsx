@@ -26,6 +26,7 @@ export function VoiceInputButton({ language, disabled, onTranscript, onError }: 
   const streamRef = useRef<MediaStream | undefined>(undefined);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const startingRef = useRef(false);
 
   const cleanup = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -54,6 +55,8 @@ export function VoiceInputButton({ language, disabled, onTranscript, onError }: 
       onError("這個 Windows 環境無法啟用 App 麥克風；可先按 Win+H 使用 Windows 語音輸入。");
       return;
     }
+    if (startingRef.current) return; // 等麥克風授權時再點不要開第二條串流
+    startingRef.current = true;
     try {
       onError("");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -114,6 +117,8 @@ export function VoiceInputButton({ language, disabled, onTranscript, onError }: 
             ? reason.message
             : String(reason),
       );
+    } finally {
+      startingRef.current = false;
     }
   };
 

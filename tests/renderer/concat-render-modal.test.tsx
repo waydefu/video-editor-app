@@ -133,8 +133,7 @@ const api = {
     migrationRequired: true,
     sourceCheckpointPreserved: true,
   })),
-  onBackgroundJobs: vi.fn(),
-  clearBackgroundJobsListeners: vi.fn(),
+  onBackgroundJobs: vi.fn(() => () => undefined),
   setTimelineTransitionSeconds: vi.fn(async () => ({})),
   estimateConcatRender: vi.fn(async (request) => ({
     outputPath: "C:/out.mp4",

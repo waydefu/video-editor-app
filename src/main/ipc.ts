@@ -644,14 +644,7 @@ export function registerIpc(
   });
   ipcMain.handle("render-temp:validate", async (_event, targetPath: string) => {
     if (concatController) throw new Error("转档进行中，暂时不能切换 Render Temporary Folder。");
-    const validated = await validateRenderTemporaryFolder(targetPath);
-    const currentLocations = userPreferences.snapshot().renderDefaults.tempLocations ?? [];
-    const nextLocations = currentLocations.length
-      ? currentLocations.map((item) => (item.role === "PRIMARY" ? { ...item, path: validated.path } : item))
-      : [{ id: "primary", path: validated.path, role: "PRIMARY" as const, enabled: true, allowFallback: true }];
-    await userPreferences.setRenderTempLocations(nextLocations);
-    await userPreferences.update({ renderDefaults: { renderTemporaryFolder: validated.path } });
-    return validated;
+    return validateRenderTemporaryFolder(targetPath);
   });
   ipcMain.handle("render-temp:list", async (): Promise<RenderTempLocationStatus[]> => {
     const locations = userPreferences.snapshot().renderDefaults.tempLocations ?? [];

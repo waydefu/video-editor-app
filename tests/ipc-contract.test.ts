@@ -20,4 +20,15 @@ describe("Electron IPC contract surface", () => {
     expect(exposedChannels.size).toBeGreaterThan(100);
     expect([...exposedChannels].filter((channel) => !mainHandlers.has(channel)).sort()).toEqual([]);
   });
+
+  it("keeps render-temp:validate read-only (no preference writes)", async () => {
+    const ipc = await readFile(path.join(process.cwd(), "src/main/ipc.ts"), "utf8");
+    const start = ipc.indexOf('ipcMain.handle("render-temp:validate"');
+    const end = ipc.indexOf('ipcMain.handle("render-temp:list"');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = ipc.slice(start, end);
+    expect(body).toContain("validateRenderTemporaryFolder(targetPath)");
+    expect(body).not.toMatch(/userPreferences/);
+  });
 });

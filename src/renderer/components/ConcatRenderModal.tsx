@@ -546,7 +546,7 @@ export function ConcatRenderModal({
     }
     const onJobs = window.sourceApp.onBackgroundJobs;
     if (!onJobs) return;
-    onJobs((jobs: BackgroundJobSnapshot[]) => {
+    return onJobs((jobs: BackgroundJobSnapshot[]) => {
       const trackedId = monitoringJobIdRef.current;
       if (!trackedId || !mountedRef.current) return;
       const tracked = jobs.find((job) => job.id === trackedId);
@@ -563,7 +563,6 @@ export function ConcatRenderModal({
         setBackgroundNotice("背景轉檔已取消。");
       }
     });
-    return () => window.sourceApp.clearBackgroundJobsListeners?.();
   }, []);
 
   const rememberRenderDefaults = (
