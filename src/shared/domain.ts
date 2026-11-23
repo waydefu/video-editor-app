@@ -2319,8 +2319,8 @@ export interface AppApi {
   clearAppCloseRequestedListeners(): void;
   getUserPreferences(): Promise<UserPreferences>;
   getBackgroundJobs?(): Promise<BackgroundJobSnapshot[]>;
-  onBackgroundJobs?(callback: (jobs: BackgroundJobSnapshot[]) => void): void;
-  clearBackgroundJobsListeners?(): void;
+  /** 訂閱背景工作更新；回傳只移除這個 callback 的取消函式。 */
+  onBackgroundJobs?(callback: (jobs: BackgroundJobSnapshot[]) => void): () => void;
   onProjectChanged?(callback: (event: ProjectChangedEvent) => void): void;
   clearProjectChangedListeners?(): void;
   updateUserPreferences(update: UserPreferencesUpdate): Promise<UserPreferences>;

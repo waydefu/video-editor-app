@@ -96,9 +96,12 @@ const api: AppApi & {
   getUserPreferences: () => ipcRenderer.invoke("preferences:get"),
   getBackgroundJobs: () => ipcRenderer.invoke("background:get-jobs"),
   onBackgroundJobs: (callback: (jobs: BackgroundJobSnapshot[]) => void) => {
-    ipcRenderer.on("background:jobs", (_event, jobs: BackgroundJobSnapshot[]) => callback(jobs));
+    const handler = (_event: Electron.IpcRendererEvent, jobs: BackgroundJobSnapshot[]) => callback(jobs);
+    ipcRenderer.on("background:jobs", handler);
+    return () => {
+      ipcRenderer.removeListener("background:jobs", handler);
+    };
   },
-  clearBackgroundJobsListeners: () => ipcRenderer.removeAllListeners("background:jobs"),
   onProjectChanged: (callback: (event: ProjectChangedEvent) => void) => {
     ipcRenderer.on("project:changed", (_event, change: ProjectChangedEvent) => callback(change));
   },

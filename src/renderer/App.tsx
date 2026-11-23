@@ -257,8 +257,7 @@ export function App() {
     void getJobs()
       .then(setBackgroundJobs)
       .catch(() => undefined);
-    onJobs(setBackgroundJobs);
-    return () => window.sourceApp.clearBackgroundJobsListeners?.();
+    return onJobs(setBackgroundJobs);
   }, []);
 
   useEffect(() => applyUiTextSize(uiTextSize), [uiTextSize]);

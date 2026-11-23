@@ -7,6 +7,7 @@ import { finalizePartialOutput } from "./atomic-output";
 function escapeFilterPath(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 function fontPath(): string {
   return path.join(process.env.WINDIR || "C:\\Windows", "Fonts", "msjh.ttc");
 }
@@ -32,8 +33,9 @@ export async function renderThumbnail(
     candidate.style.overlayOpacityPercent > 0
       ? `,drawbox=x=0:y=0:w=iw:h=ih:color=black@${Math.max(0, Math.min(100, candidate.style.overlayOpacityPercent)) / 100}:t=fill`
       : "";
+  const textColor = HEX_COLOR.test(candidate.style.textColor) ? candidate.style.textColor : "#FFFFFF";
   const text = candidate.style.text.trim()
-    ? `,drawtext=fontfile='${escapeFilterPath(fontPath())}':textfile='${escapeFilterPath(textPath)}':fontcolor=${candidate.style.textColor}:fontsize=${Math.max(18, Math.min(180, Math.round(candidate.style.fontSizePx)))}:borderw=${Math.max(0, Math.min(12, Math.round(candidate.style.outlineWidthPx)))}:bordercolor=black:x=w*${Math.max(0, Math.min(100, candidate.style.textXPercent)) / 100}-text_w/2:y=h*${Math.max(0, Math.min(100, candidate.style.textYPercent)) / 100}-text_h/2`
+    ? `,drawtext=fontfile='${escapeFilterPath(fontPath())}':textfile='${escapeFilterPath(textPath)}':fontcolor=${textColor}:fontsize=${Math.max(18, Math.min(180, Math.round(candidate.style.fontSizePx)))}:borderw=${Math.max(0, Math.min(12, Math.round(candidate.style.outlineWidthPx)))}:bordercolor=black:x=w*${Math.max(0, Math.min(100, candidate.style.textXPercent)) / 100}-text_w/2:y=h*${Math.max(0, Math.min(100, candidate.style.textYPercent)) / 100}-text_h/2`
     : "";
   const args = [
     "-y",

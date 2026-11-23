@@ -3827,8 +3827,8 @@ describe("App source workflow", () => {
     api.getBackgroundJobs = vi.fn(async () => []);
     api.onBackgroundJobs = vi.fn((callback) => {
       publishJobs = callback;
+      return () => undefined;
     });
-    api.clearBackgroundJobsListeners = vi.fn();
     Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
     render(<App />);
     await screen.findByText("素材清單");
