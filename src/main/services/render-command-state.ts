@@ -106,6 +106,16 @@ export class RenderCommandState {
       state: "RUNNING",
       prepared: false,
       progressPercent: 0,
+      attemptElapsedMs: undefined,
+      cumulativeElapsedMs: undefined,
+      estimatedRemainingMs: undefined,
+      currentSegment: undefined,
+      encoder: undefined,
+      cpuUsagePercent: undefined,
+      gpuEncodeUsagePercent: undefined,
+      ramUsedBytes: undefined,
+      ramAvailableBytes: undefined,
+      ssdFreeBytes: undefined,
       resolution: request.resolution,
       renderMode: request.lowMemorySegmented ? "LOW_MEMORY" : request.highSpeedMode ? "HIGH_SPEED" : "NORMAL",
       audioMode: request.audioProcessing?.mode ?? "ORIGINAL_STEREO",
@@ -156,7 +166,7 @@ export class RenderCommandState {
       progressPercent: result.cancelled ? this.snapshotValue.progressPercent : 100,
       attemptElapsedMs: result.attemptElapsedMs,
       cumulativeElapsedMs: result.cumulativeElapsedMs,
-      estimatedRemainingMs: result.cancelled ? this.snapshotValue.estimatedRemainingMs : 0,
+      estimatedRemainingMs: result.cancelled ? undefined : 0,
       pauseDetail: undefined,
     });
   }
@@ -167,6 +177,7 @@ export class RenderCommandState {
     this.patch({
       state: error instanceof Error && error.name === "AbortError" ? "CANCELLED" : "FAILED",
       prepared: false,
+      estimatedRemainingMs: undefined,
       latestError: redactLocalPaths(error instanceof Error ? error.message : String(error)),
       pauseDetail: undefined,
     });
@@ -188,12 +199,11 @@ export class RenderCommandState {
 
   async resumeCheckpoint(): Promise<void> {
     if (!this.handlers) throw new Error("遠端命令尚未就緒。");
-    if (this.snapshotValue.state === "PAUSED") {
+    if (this.snapshotValue.state === "PAUSED" || this.snapshotValue.state === "PAUSING") {
       this.resumeFromPause();
       return;
     }
-    if (this.snapshotValue.state === "RUNNING" || this.snapshotValue.state === "PAUSING")
-      throw new Error("目前转档没有暂停。");
+    if (this.snapshotValue.state === "RUNNING") throw new Error("目前转档没有暂停。");
     void this.handlers.resumeCheckpoint().catch((error) => this.markFailed(error));
   }
 
@@ -205,7 +215,7 @@ export class RenderCommandState {
 
   async waitAtSafeBoundary(signal?: AbortSignal, detail = "已在安全分段边界暂停"): Promise<void> {
     if (!this.pauseRequested) return;
-    this.patch({ state: "PAUSED", pauseDetail: detail });
+    signal?.throwIfAborted();
     await new Promise<void>((resolve, reject) => {
       const onAbort = () => {
         this.pauseWaiters = this.pauseWaiters.filter((waiter) => waiter !== done);
@@ -215,8 +225,10 @@ export class RenderCommandState {
         signal?.removeEventListener("abort", onAbort);
         resolve();
       };
+      // Register before publishing PAUSED: subscribers may synchronously resume.
       this.pauseWaiters.push(done);
       signal?.addEventListener("abort", onAbort, { once: true });
+      this.patch({ state: "PAUSED", pauseDetail: detail });
     });
   }
 

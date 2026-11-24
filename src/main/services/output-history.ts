@@ -233,7 +233,23 @@ export class OutputHistoryStore {
         errors.push(`${path.basename(resolved)}：${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (additions.length) await this.mutate((outputs) => [...additions.reverse(), ...outputs]);
+    if (additions.length) {
+      await this.mutate((outputs) => {
+        // Media probing happens outside the write queue; recheck at commit time.
+        const committed = new Set(outputs.map((item) => canonicalPath(item.outputPath)));
+        const unique = additions.filter((item) => {
+          const key = canonicalPath(item.outputPath);
+          if (committed.has(key)) {
+            addedCount -= 1;
+            duplicateCount += 1;
+            return false;
+          }
+          committed.add(key);
+          return true;
+        });
+        return [...unique.reverse(), ...outputs];
+      });
+    }
     return { cancelled: false, addedCount, duplicateCount, errors, history: await this.snapshot() };
   }
 

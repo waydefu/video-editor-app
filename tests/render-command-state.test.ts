@@ -107,4 +107,40 @@ describe("RenderCommandState", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects an already-aborted pause boundary without hanging", async () => {
+    const state = new RenderCommandState("Project");
+    state.markStarting(request);
+    state.requestPause();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(state.waitAtSafeBoundary(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("registers a safe-boundary waiter before notifying synchronous subscribers", async () => {
+    const state = new RenderCommandState("Project");
+    state.markStarting(request);
+    state.requestPause();
+    const unsubscribe = state.subscribe((snapshot) => {
+      if (snapshot.state === "PAUSED") state.resumeFromPause();
+    });
+    try {
+      await state.waitAtSafeBoundary();
+      expect(state.snapshot().state).toBe("RUNNING");
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("can withdraw a pending pause before reaching a safe boundary", async () => {
+    const state = new RenderCommandState("Project");
+    const resume = vi.fn();
+    state.setHandlers({ startPrepared: vi.fn(), resumeCheckpoint: resume, cancel: vi.fn() });
+    state.markStarting(request);
+    state.requestPause();
+    await state.resumeCheckpoint();
+    expect(state.snapshot().state).toBe("RUNNING");
+    await expect(state.waitAtSafeBoundary()).resolves.toBeUndefined();
+    expect(resume).not.toHaveBeenCalled();
+  });
 });

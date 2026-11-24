@@ -24,7 +24,9 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
   const [confirmRemoveId, setConfirmRemoveId] = useState<string>();
   const [youtubeOutput, setYoutubeOutput] = useState<PreviewOutputRecord>();
   const [notice, setNotice] = useState<string>();
+  const [importing, setImporting] = useState(false);
   const addExisting = async () => {
+    setImporting(true);
     setError(undefined);
     setNotice(undefined);
     try {
@@ -37,6 +39,8 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
       if (result.errors.length) setError(result.errors.join("\n"));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -98,17 +102,23 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
           </button>
         </header>
         <div className="output-history-toolbar">
-          <button className="secondary-button" type="button" disabled={loading} onClick={() => void addExisting()}>
-            ＋ 加入以前的 MP4…
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={loading || importing}
+            aria-busy={importing}
+            onClick={() => void addExisting()}
+          >
+            {importing ? "正在加入 MP4…" : "＋ 加入以前的 MP4…"}
           </button>
-          <button type="button" disabled={loading} onClick={() => void refresh()}>
+          <button type="button" disabled={loading || importing} onClick={() => void refresh()}>
             重新檢查檔案
           </button>
           <span>加入只建立索引，不複製、不移動、不刪除影片。</span>
         </div>
-        <div className="output-history-body">
+        <div className="output-history-body" aria-busy={loading || importing}>
           {loading && !outputs.length ? (
-            <div className="loading-shell">
+            <div className="loading-shell" role="status">
               <span className="spinner" />
               <p>正在讀取預覽成品紀錄…</p>
             </div>
@@ -195,6 +205,11 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
                   </article>
                 );
               })}
+            </div>
+          ) : error ? (
+            <div className="empty-state">
+              <h2>無法讀取預覽成品紀錄</h2>
+              <p>請重新檢查檔案，或確認磁碟與資料存取權限。</p>
             </div>
           ) : (
             <div className="empty-state">

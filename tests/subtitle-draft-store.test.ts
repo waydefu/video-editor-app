@@ -161,4 +161,16 @@ describe("safe AI subtitle draft storage", () => {
     expect(await readFile(draft, "utf8")).toBe("broken draft");
     expect((await readdir(root)).sort()).toEqual(["official.ai-draft.srt", "official.srt"]);
   });
+
+  it("publishes the exact validated draft bytes when there is no previous official file", async () => {
+    const root = await temporaryRoot();
+    const official = path.join(root, "new.srt");
+    const draft = subtitleAiDraftPath(official);
+    await writeSubtitleAiDraft(official, validCues);
+    const validated = await readFile(draft);
+    const result = await promoteSubtitleAiDraft(official, "BACKUP");
+    expect(result.backupPath).toBeUndefined();
+    expect(await readFile(official)).toEqual(validated);
+    expect(await readFile(draft)).toEqual(validated);
+  });
 });

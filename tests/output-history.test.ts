@@ -121,4 +121,36 @@ describe("persistent preview output history", () => {
     expect(offline.outputs[0]).toMatchObject({ exists: false, fileName: "以前的 預覽檔.mp4" });
     await expect(store.get(offline.outputs[0].jobId)).rejects.toThrow(/移動、刪除或離線/);
   });
+
+  it("deduplicates overlapping imports when both media probes finish before commit", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "output-history-concurrent-"));
+    roots.push(root);
+    const outputPath = path.join(root, "same.mp4");
+    await writeFile(outputPath, "existing media");
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const probe = {
+      probe: vi.fn(async () => {
+        await barrier;
+        return { width: 1280, height: 720, durationMs: 1_000, videoCodec: "h264" };
+      }),
+    };
+    const store = new OutputHistoryStore(path.join(root, "app-data"), probe as unknown as MediaProbe);
+    await store.initialize();
+
+    const first = store.importExisting([outputPath]);
+    const second = store.importExisting([outputPath]);
+    await vi.waitFor(() => expect(probe.probe).toHaveBeenCalledTimes(2));
+    release();
+    const results = await Promise.all([first, second]);
+
+    expect(results.reduce((total, result) => total + result.addedCount, 0)).toBe(1);
+    expect(results.reduce((total, result) => total + result.duplicateCount, 0)).toBe(1);
+    expect((await store.snapshot()).outputs).toHaveLength(1);
+    const reopened = new OutputHistoryStore(path.join(root, "app-data"));
+    await reopened.initialize();
+    expect((await reopened.snapshot()).outputs).toHaveLength(1);
+  });
 });

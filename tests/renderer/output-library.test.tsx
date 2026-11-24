@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { OutputLibrary } from "../../src/renderer/components/OutputLibrary";
+import { OutputLibrary, useOutputLibrary } from "../../src/renderer/components/OutputLibrary";
 import type { PreviewOutputRecord } from "../../src/shared/domain";
 
 const outputs: PreviewOutputRecord[] = [
@@ -78,5 +78,45 @@ describe("shared output library", () => {
     render(<OutputLibrary purpose="CONCAT" title="可用成品" />);
     expect(await screen.findByText("尚無仍存在的預覽檔。")).toBeTruthy();
     expect(api.playConcatOutput).not.toHaveBeenCalled();
+  });
+
+  it("shows loading rather than a false empty state and reports read errors with retry", async () => {
+    let rejectRead!: (reason: Error) => void;
+    const pending = new Promise<{ schemaVersion: 1; outputs: PreviewOutputRecord[] }>((_resolve, reject) => {
+      rejectRead = reject;
+    });
+    const api = {
+      getPreviewOutputHistory: vi.fn(() => pending),
+    };
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    const view = render(<OutputLibrary title="Loading check" />);
+    const region = within(screen.getByRole("region", { name: "Loading check" }));
+    expect(region.getByText("正在讀取預覽成品紀錄…")).toBeTruthy();
+    expect(region.queryByText("尚無仍存在的預覽檔。")).toBeNull();
+    await act(async () => {
+      rejectRead(new Error("磁碟讀取失敗"));
+    });
+    expect(region.getByRole("alert").textContent).toContain("磁碟讀取失敗");
+    expect(region.getByRole("button", { name: "重新讀取成品紀錄" })).toBeTruthy();
+    expect(region.queryByText("尚無仍存在的預覽檔。")).toBeNull();
+    view.unmount();
+  });
+
+  it("does not let a pending read overwrite a newer mutation or refresh", async () => {
+    type Snapshot = { schemaVersion: 1; outputs: PreviewOutputRecord[] };
+    let resolveOld!: (snapshot: Snapshot) => void;
+    const pending = new Promise<Snapshot>((resolve) => {
+      resolveOld = resolve;
+    });
+    const api = {
+      getPreviewOutputHistory: vi.fn(() => pending),
+    };
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    const hook = renderHook(() => useOutputLibrary());
+    act(() => hook.result.current.setOutputs([outputs[1]]));
+    await act(async () => resolveOld({ schemaVersion: 1, outputs: [outputs[0]] }));
+    expect(hook.result.current.outputs).toEqual([outputs[1]]);
+    expect(hook.result.current.loading).toBe(false);
+    hook.unmount();
   });
 });

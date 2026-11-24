@@ -9867,3 +9867,46 @@ button.danger-text,
     flex-direction: column;
   }
 }
+
+/* Output library: keep actions and metadata reachable in narrow/high-zoom windows. */
+.output-library-compact header,
+.output-library-compact li,
+.history-remove-confirm {
+  flex-wrap: wrap;
+}
+.output-library-compact li > div:first-child {
+  flex: 1 1 180px;
+  max-width: 100%;
+}
+.output-library-compact .output-record-actions {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.output-history-list article {
+  min-width: 0;
+}
+.output-history-list article > header {
+  flex-wrap: wrap;
+}
+.output-history-list .source-path {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .output-history-backdrop {
+    padding: 8px;
+  }
+  .output-history-modal {
+    width: 100%;
+    max-height: calc(100vh - 16px);
+  }
+  .output-history-modal .settings-footer {
+    flex-wrap: wrap;
+  }
+  .output-history-toolbar,
+  .output-history-body {
+    padding: 10px;
+  }
+  .output-history-toolbar span {
+    margin-left: 0;
+  }
+}
