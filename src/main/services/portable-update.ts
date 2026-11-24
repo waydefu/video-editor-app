@@ -4,6 +4,7 @@ import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AppUpdateStatus } from "../../shared/domain";
 import { finalizePartialOutput } from "./atomic-output";
+import { hashPortableTree, preparePortableVersion, type PreparedPortableVersion } from "./portable-update-install";
 
 const REPOSITORY = "waydefu/video-editor-app";
 const RELEASES = `https://github.com/${REPOSITORY}/releases`;
@@ -12,6 +13,12 @@ const ARCHIVE = "scenerywalker-portable-win-x64.zip";
 const MANIFEST = "scenerywalker-portable-update.json";
 const MAX_ARCHIVE_BYTES = 1024 ** 3;
 const MAX_METADATA_BYTES = 256 * 1024;
+const ALLOWED_HOSTS = new Set([
+  "api.github.com",
+  "github.com",
+  "release-assets.githubusercontent.com",
+  "objects.githubusercontent.com",
+]);
 
 export interface PortableManifest {
   schemaVersion: 1;
@@ -75,9 +82,7 @@ async function getResponse(fetcher: typeof fetch, initialUrl: string, timeoutMs:
       url.port ||
       url.username ||
       url.password ||
-      !["api.github.com", "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"].includes(
-        url.hostname,
-      )
+      !ALLOWED_HOSTS.has(url.hostname)
     )
       throw new Error("拒絕不可信的更新下載來源。");
     const response = await fetcher(url, { redirect: "manual", signal, headers: { Accept: "*/*" } });
@@ -123,10 +128,12 @@ async function fileDigest(filePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
-/** Only official, signed stable packages are staged. No downloaded program is executed here. */
+/** Only signed stable packages may be downloaded and prepared for explicit activation. */
 export class PortableUpdateService {
   private busy = false;
   private staged?: { filePath: string; manifest: PortableManifest };
+  private prepared?: PreparedPortableVersion;
+  private armed = false;
 
   constructor(
     private readonly currentVersion: string,
@@ -163,23 +170,35 @@ export class PortableUpdateService {
       throw error;
     });
     if (!publicKey)
-      return { status: this.result("MANUAL", "本版本尚未內建更新驗證金鑰，請至官方發布頁手動更新。", version) };
+      return {
+        status: this.result("MANUAL", "本版本尚未內建更新驗證金鑰，請至官方發布頁手動更新。", version),
+      };
     const raw = await metadata(await getResponse(this.fetcher, assetUrl(version, MANIFEST), 30_000));
     const manifest = verifyPortableManifest(raw, publicKey, version);
-    return { status: this.result("AVAILABLE", "已驗證新版資訊，可下載到獨立位置。", version), manifest };
+    return {
+      status: this.result("AVAILABLE", "已驗證新版資訊，可下載到獨立位置。", version),
+      manifest,
+    };
   }
 
   async check(): Promise<AppUpdateStatus> {
+    if (this.prepared)
+      return this.result(
+        this.armed ? "ARMED" : "PREPARED",
+        this.armed ? "下次正常關閉時將切換新版。" : "新版已解壓並通過隔離啟動檢查。",
+        this.prepared.version,
+      );
     return (await this.discover()).status;
   }
 
   async download(): Promise<AppUpdateStatus> {
-    if (this.busy) throw new Error("已有更新下載正在進行。");
+    if (this.busy || this.armed) throw new Error("已有更新作業正在進行或等待切換。");
     this.busy = true;
     let partial: string | undefined;
     try {
       const { status, manifest } = await this.discover();
       if (!manifest) return status;
+      if (this.prepared) throw new Error("已有準備完成的新版，請先完成切換。");
       await mkdir(this.root, { recursive: true });
       const filePath = path.join(this.root, `SceneryWalker-v${manifest.version}-${manifest.sha256.slice(0, 12)}.zip`);
       const existing = await stat(filePath).catch(() => undefined);
@@ -211,6 +230,42 @@ export class PortableUpdateService {
       if (partial) await rm(partial, { force: true }).catch(() => undefined);
       this.busy = false;
     }
+  }
+
+  get isArmed(): boolean {
+    return this.armed;
+  }
+
+  async prepare(): Promise<AppUpdateStatus> {
+    if (!this.enabled || this.busy || this.armed) throw new Error("目前不能準備新版。");
+    if (this.prepared) return this.check();
+    this.busy = true;
+    try {
+      const archive = await this.verifiedArchive();
+      this.prepared = await preparePortableVersion(archive, this.staged!.manifest, path.join(this.root, "versions"));
+      return this.result("PREPARED", "新版已解壓並通過隔離啟動檢查。", this.prepared.version);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async arm(): Promise<AppUpdateStatus> {
+    if (this.busy || !this.prepared) throw new Error("請先完成新版準備。");
+    this.armed = true;
+    return this.check();
+  }
+
+  async disarm(): Promise<AppUpdateStatus> {
+    this.armed = false;
+    return this.check();
+  }
+
+  async verifiedLaunch(): Promise<string> {
+    const prepared = this.prepared;
+    if (!this.armed || !prepared || this.busy || (await hashPortableTree(prepared.directory)) !== prepared.treeHash)
+      throw new Error("新版未通過啟動前完整性驗證，舊版已保留。");
+    if (!this.armed) throw new Error("已取消版本切換。");
+    return prepared.executable;
   }
 
   async verifiedArchive(): Promise<string> {

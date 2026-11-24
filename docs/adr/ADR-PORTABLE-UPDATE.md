@@ -2,7 +2,7 @@
 
 ## 決策
 
-現有 Electron Packager 的可攜版保留。Electron / electron-builder 文件明確區分可攜手動更新與 NSIS 安裝版更新；不能把普通 dist ZIP 當安裝器。先交付正式 Windows 封裝啟動時的版本檢查、更新中心、簽署套件背景下載與獨立暫存，不會自動解壓、執行、關閉或覆蓋現有 App。
+現有 Electron Packager 的可攜版保留。Electron / electron-builder 文件明確區分可攜手動更新與 NSIS 安裝版更新；不能把普通 dist ZIP 當安裝器。先交付正式 Windows 封裝啟動時的版本檢查、更新中心、簽署套件背景下載與獨立暫存，新版準備階段會安全解壓與隔離 smoke；不會強制關閉或覆蓋現有 App。
 
 來源：
 
@@ -20,7 +20,7 @@
 
 ## 使用者安全
 
-ZIP 下載到 userData/updates，原安裝、專案、成品及 checkpoint 不覆蓋。使用者完成所有作業後手動解壓至新目錄，關閉舊版後啟動新版；舊版保留，但資料 schema 降版相容性須獨立驗證。未實作無人值守安裝、啟動健康檢查、自動回滾或差量更新。
+ZIP 下載到 userData/updates，原安裝、專案、成品及 checkpoint 不覆蓋。使用者可準備新版：Windows ZIP 以同一唯讀 handle 核對 hash 並解壓到新目錄，拒絕路徑逸出、裝置名稱、重複路徑及過量資料；以隔離 userData 執行封裝 smoke，保存完整檔案樹 hash。確認安排切換後，使用原有正常關閉流程；主程序拒絕在 IPC、轉檔預檢及背景工作尚未完成時切換，封鎖新 IPC，重新核對檔案樹，再安排 Electron relaunch。舊版保留，準備失敗不改正式資料。尚未保證新版正式資料 migration 後可安全降版，未實作正式資料自動回滾或差量更新。
 
 ## 後續正式自動更新
 
@@ -29,3 +29,7 @@ ZIP 下載到 userData/updates，原安裝、專案、成品及 checkpoint 不�
 ## 驗收
 
 本 PR 新增純程式測試，尚未配置倉庫簽署秘密或發布新的正式 Windows 套件。CI 與實機結果必須分別記錄。
+
+## 可攜版切換驗收限制
+
+隔離 smoke 不是正式專案的兩版本驗收。切換安排僅當次執行有效，不在 OS 關機時強制執行。需以正式簽署套件驗證 Windows 解壓、IPC 空閒閘、正常重啟及舊版保留；不宣稱已完成正式熱更。

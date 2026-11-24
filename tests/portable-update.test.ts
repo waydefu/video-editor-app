@@ -79,13 +79,8 @@ describe("portable updates", () => {
       const keyPath = path.join(root, "public.pem");
       await writeFile(keyPath, publicPem);
       const updateRoot = path.join(root, "updates");
-      const corrupt = new PortableUpdateService(
-        "0.88.0",
-        true,
-        updateRoot,
-        keyPath,
-        mockFetch(Buffer.alloc(archive.length)),
-      );
+      const corruptFetch = mockFetch(Buffer.alloc(archive.length));
+      const corrupt = new PortableUpdateService("0.88.0", true, updateRoot, keyPath, corruptFetch);
       await expect(corrupt.download()).rejects.toThrow(/SHA-256/);
       expect(await readdir(updateRoot)).toEqual([]);
       const good = new PortableUpdateService("0.88.0", true, updateRoot, keyPath, mockFetch());

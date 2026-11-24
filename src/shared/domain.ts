@@ -2314,7 +2314,7 @@ export interface ExternalOpenResult {
 }
 
 export interface AppUpdateStatus {
-  state: "DISABLED" | "CURRENT" | "MANUAL" | "AVAILABLE" | "READY";
+  state: "DISABLED" | "CURRENT" | "MANUAL" | "AVAILABLE" | "READY" | "PREPARED" | "ARMED";
   currentVersion: string;
   latestVersion?: string;
   message: string;
@@ -2324,6 +2324,9 @@ export interface AppApi {
   getAppInfo(): Promise<AppInfo>;
   checkAppUpdate?(): Promise<AppUpdateStatus>;
   downloadAppUpdate?(): Promise<AppUpdateStatus>;
+  prepareAppUpdate?(): Promise<AppUpdateStatus>;
+  armAppUpdate?(): Promise<AppUpdateStatus>;
+  disarmAppUpdate?(): Promise<AppUpdateStatus>;
   openAppUpdateRelease?(): Promise<void>;
   showAppUpdateArchive?(): Promise<void>;
   confirmAppClose(): void;

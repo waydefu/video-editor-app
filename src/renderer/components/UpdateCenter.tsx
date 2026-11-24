@@ -29,7 +29,7 @@ export function UpdateCenter({ version }: { version?: string }) {
     };
   }, []);
 
-  const run = async (action: "CHECK" | "DOWNLOAD" | "SHOW" | "RELEASE") => {
+  const run = async (action: "CHECK" | "DOWNLOAD" | "SHOW" | "RELEASE" | "PREPARE" | "ARM" | "DISARM") => {
     if (busy) return;
     setBusy(true);
     setError(undefined);
@@ -40,6 +40,15 @@ export function UpdateCenter({ version }: { version?: string }) {
       } else if (action === "DOWNLOAD") {
         const next = await window.sourceApp.downloadAppUpdate?.();
         if (next) setStatus(next);
+      } else if (action === "PREPARE") {
+        const next = await window.sourceApp.prepareAppUpdate?.();
+        if (next) setStatus(next);
+      } else if (action === "ARM") {
+        const next = await window.sourceApp.armAppUpdate?.();
+        if (next) setStatus(next);
+      } else if (action === "DISARM") {
+        const next = await window.sourceApp.disarmAppUpdate?.();
+        if (next) setStatus(next);
       } else if (action === "SHOW") await window.sourceApp.showAppUpdateArchive?.();
       else await window.sourceApp.openAppUpdateRelease?.();
     } catch (reason) {
@@ -49,7 +58,7 @@ export function UpdateCenter({ version }: { version?: string }) {
     }
   };
 
-  const available = status?.state === "AVAILABLE" || status?.state === "MANUAL" || status?.state === "READY";
+  const available = status && ["AVAILABLE", "MANUAL", "READY", "PREPARED", "ARMED"].includes(status.state);
   return (
     <>
       <button
@@ -59,7 +68,8 @@ export function UpdateCenter({ version }: { version?: string }) {
         title="軟體版本與更新"
         onClick={() => setVisible(true)}
       >
-        版本 v{version ?? "…"}{available ? " · 有新版" : ""}
+        版本 v{version ?? "…"}
+        {available ? " · 有新版" : ""}
       </button>
       {visible && (
         <div className="modal-backdrop" role="presentation">
@@ -69,7 +79,12 @@ export function UpdateCenter({ version }: { version?: string }) {
                 <span className="eyebrow">SCENERYWALKER</span>
                 <h2 id="update-title">版本與更新</h2>
               </div>
-              <SafeDefaultButton type="button" className="close-button" onClick={() => setVisible(false)} aria-label="關閉更新">
+              <SafeDefaultButton
+                type="button"
+                className="close-button"
+                onClick={() => setVisible(false)}
+                aria-label="關閉更新"
+              >
                 ×
               </SafeDefaultButton>
             </header>
@@ -79,7 +94,10 @@ export function UpdateCenter({ version }: { version?: string }) {
               <p>{busy ? "正在處理更新，請勿關閉程式。" : (status?.message ?? "尚未檢查更新。")}</p>
               {busy && <progress aria-label="更新作業進行中" />}
               {error && <p role="alert">{error}</p>}
-              <p>下載不會覆蓋現有程式、專案或 checkpoint。請先完成所有剪輯、轉檔與上傳，再關閉舊版並解壓新版至獨立資料夾。</p>
+              <p>
+                新版會解壓至獨立目錄並以隔離資料測試啟動。請先保存所有編輯，完成轉檔與上傳，再正常關閉舊版切換。
+                舊程式保留；若新版已修改資料格式，不能保證直接降版相容。
+              </p>
             </div>
             <div className="remote-disabled-state">
               <button className="secondary-button" type="button" disabled={busy} onClick={() => void run("CHECK")}>
@@ -91,8 +109,23 @@ export function UpdateCenter({ version }: { version?: string }) {
                 </button>
               )}
               {status?.state === "READY" && (
-                <button className="primary-button" type="button" disabled={busy} onClick={() => void run("SHOW")}>
-                  顯示已驗證套件
+                <>
+                  <button className="primary-button" type="button" disabled={busy} onClick={() => void run("PREPARE")}>
+                    準備新版並檢查啟動
+                  </button>
+                  <button className="secondary-button" type="button" disabled={busy} onClick={() => void run("SHOW")}>
+                    顯示已驗證套件
+                  </button>
+                </>
+              )}
+              {status?.state === "PREPARED" && (
+                <button className="primary-button" type="button" disabled={busy} onClick={() => void run("ARM")}>
+                  下次正常關閉時切換
+                </button>
+              )}
+              {status?.state === "ARMED" && (
+                <button className="secondary-button" type="button" disabled={busy} onClick={() => void run("DISARM")}>
+                  取消切換安排
                 </button>
               )}
               <button className="secondary-button" type="button" disabled={busy} onClick={() => void run("RELEASE")}>

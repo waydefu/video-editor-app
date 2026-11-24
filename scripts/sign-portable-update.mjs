@@ -14,9 +14,9 @@ const privateKey = createPrivateKey(await readFile(privateKeyPath));
 const publicKey = createPublicKey(await readFile(publicKeyPath));
 if (
   privateKey.asymmetricKeyType !== "ed25519" ||
-  !createPublicKey(privateKey).export({ type: "spki", format: "der" }).equals(
-    publicKey.export({ type: "spki", format: "der" }),
-  )
+  !createPublicKey(privateKey)
+    .export({ type: "spki", format: "der" })
+    .equals(publicKey.export({ type: "spki", format: "der" }))
 )
   throw new Error("Release signing key does not match the pinned public key.");
 const bytes = (await stat(archive)).size;

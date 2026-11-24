@@ -1,8 +1,9 @@
 import { RenderAdmission } from "./services/render-admission";
+import { IpcActivityGate } from "./services/ipc-activity-gate";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell as electronShell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain as electronIpcMain, shell as electronShell } from "electron";
 import type {
   AiAccountSaveInput,
   AiPublishGenerationOptions,
@@ -172,7 +173,12 @@ export function registerIpc(
   renderCommands: RenderCommandState,
   remoteControl: RemoteControlServer,
   postSuccessPower: PostSuccessPowerScheduler,
-): void {
+): () => () => void {
+  const activity = new IpcActivityGate();
+  const ipcMain = {
+    handle: (channel: string, listener: Parameters<typeof electronIpcMain.handle>[1]) =>
+      electronIpcMain.handle(channel, (event, ...args) => activity.run(() => listener(event, ...args))),
+  };
   let importController: AbortController | undefined;
   let concatController: AbortController | undefined;
   const renderAdmission = new RenderAdmission();
@@ -537,6 +543,7 @@ export function registerIpc(
   };
   const withRenderAdmission = <T>(operation: () => Promise<T>): Promise<T> =>
     renderAdmission.run(async () => {
+      if (activity.isSealed) throw new Error("正在安全切換版本，暫時不能開始轉檔。");
       if (projectSwitchInProgress) throw new Error("專案正在切換，請完成後再轉檔。");
       return operation();
     });
@@ -2992,4 +2999,21 @@ export function registerIpc(
   ipcMain.handle("platform-upload:open-portal", (_event, platform: BrowserUploadPlatform) =>
     platformUploadHandoff.openPortal(platform),
   );
+  return () => {
+    assertNoRunningProjectJobs();
+    if (
+      renderPowerGuard.isActive ||
+      importController ||
+      introController ||
+      voiceInputController ||
+      musicSuggestionController ||
+      audioPreviewController ||
+      aiPublishController ||
+      youtubeAuthController ||
+      youtubeUploadController ||
+      previewControllers.size > 0
+    )
+      throw new Error("目前還有匯入、預覽、AI 或上傳工作，請完成後再切換版本。");
+    return activity.seal();
+  };
 }
