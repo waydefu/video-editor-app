@@ -1,5 +1,5 @@
 import { packager } from "@electron/packager";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -57,6 +57,15 @@ const outputPath = appPaths[0];
 await mkdir(outputPath, { recursive: true });
 const soundAssetDirectory = path.join(outputPath, "resources", "assets");
 await mkdir(soundAssetDirectory, { recursive: true });
+// The signing private key is never bundled. The public trust anchor is selected at release build time.
+const updatePublicKeyPath = process.env.SCENERYWALKER_UPDATE_PUBLIC_KEY?.trim();
+if (updatePublicKeyPath) {
+  const publicPem = await readFile(updatePublicKeyPath, "utf8");
+  const key = createPublicKey(publicPem);
+  if (!publicPem.includes("BEGIN PUBLIC KEY") || key.asymmetricKeyType !== "ed25519")
+    throw new Error("更新驗證金鑰必須是 Ed25519 公開金鑰 PEM。");
+  await writeFile(path.join(soundAssetDirectory, "update-public-key.pem"), key.export({ type: "spki", format: "pem" }));
+}
 await copyFile(dunesShutterSource, path.join(soundAssetDirectory, "camera-shutter-click-14671.mp3"));
 await copyFile(
   path.join(appRoot, "scripts", "benchmark-render-modes.ps1"),

@@ -71,6 +71,10 @@ const api: AppApi & {
   setRenderTempLocations(locations: RenderTempLocationConfig[]): Promise<RenderTempLocationConfig[]>;
 } = {
   getAppInfo: () => ipcRenderer.invoke("app:get-info"),
+  checkAppUpdate: () => ipcRenderer.invoke("app:update-check"),
+  downloadAppUpdate: () => ipcRenderer.invoke("app:update-download"),
+  openAppUpdateRelease: () => ipcRenderer.invoke("app:update-open-release"),
+  showAppUpdateArchive: () => ipcRenderer.invoke("app:update-show-archive"),
   getRemoteControlStatus: () => ipcRenderer.invoke("remote-control:get-status"),
   enableRemoteControl: () => ipcRenderer.invoke("remote-control:enable"),
   disableRemoteControl: () => ipcRenderer.invoke("remote-control:disable"),

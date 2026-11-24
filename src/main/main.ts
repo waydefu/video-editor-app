@@ -13,6 +13,7 @@ import {
   shell,
 } from "electron";
 import { registerIpc } from "./ipc";
+import { officialReleasesUrl, PortableUpdateService } from "./services/portable-update";
 import { pathToFileURL } from "node:url";
 import { isTrustedAppNavigation } from "./services/trusted-navigation";
 import { ConcatRenderService } from "./services/concat-render";
@@ -321,6 +322,21 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(async () => {
+  const updates = new PortableUpdateService(
+    app.getVersion(),
+    app.isPackaged && process.platform === "win32" && !process.env.APP_TEST_USER_DATA_PATH,
+    path.join(app.getPath("userData"), "updates"),
+    path.join(process.resourcesPath, "assets", "update-public-key.pem"),
+  );
+  ipcMain.handle("app:update-check", () => updates.check());
+  ipcMain.handle("app:update-download", () => updates.download());
+  ipcMain.handle("app:update-open-release", () => shell.openExternal(officialReleasesUrl));
+  ipcMain.handle("app:update-show-archive", async () => {
+    if (renderPowerGuard.isActive) throw new Error("轉檔尚未完成，請稍後切換新版。");
+    const archive = await updates.verifiedArchive();
+    if (renderPowerGuard.isActive) throw new Error("轉檔尚未完成，請稍後切換新版。");
+    shell.showItemInFolder(archive);
+  });
   configureAiModelCatalogRoot(app.getPath("userData"));
   const store = new ProjectStore(app.getPath("userData"));
   await store.initialize();
