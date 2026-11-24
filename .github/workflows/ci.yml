@@ -38,7 +38,15 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: Format check (prettier)
+        id: format
         run: npm run format:check
+
+      - name: Show exact formatting diff on failure
+        if: failure() && steps.format.outcome == 'failure'
+        shell: pwsh
+        run: |
+          npm run format
+          git --no-pager diff --no-ext-diff
 
       - name: Typecheck (main + renderer)
         run: npm run typecheck

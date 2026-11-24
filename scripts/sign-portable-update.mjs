@@ -34,6 +34,9 @@ const payload = Buffer.from(
 );
 await writeFile(
   manifestPath,
-  JSON.stringify({ payload: payload.toString("base64"), signature: sign(null, payload, privateKey).toString("base64") }),
+  JSON.stringify({
+    payload: payload.toString("base64"),
+    signature: sign(null, payload, privateKey).toString("base64"),
+  }),
   { flag: "wx" },
 );

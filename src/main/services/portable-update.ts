@@ -77,13 +77,7 @@ async function getResponse(fetcher: typeof fetch, initialUrl: string, timeoutMs:
   let url = new URL(initialUrl);
   const signal = AbortSignal.timeout(timeoutMs);
   for (let redirects = 0; redirects <= 4; redirects++) {
-    if (
-      url.protocol !== "https:" ||
-      url.port ||
-      url.username ||
-      url.password ||
-      !ALLOWED_HOSTS.has(url.hostname)
-    )
+    if (url.protocol !== "https:" || url.port || url.username || url.password || !ALLOWED_HOSTS.has(url.hostname))
       throw new Error("拒絕不可信的更新下載來源。");
     const response = await fetcher(url, { redirect: "manual", signal, headers: { Accept: "*/*" } });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -169,10 +163,10 @@ export class PortableUpdateService {
       if (error.code === "ENOENT") return undefined;
       throw error;
     });
-    if (!publicKey)
-      return {
-        status: this.result("MANUAL", "本版本尚未內建更新驗證金鑰，請至官方發布頁手動更新。", version),
-      };
+    if (!publicKey) {
+      const message = "本版本尚未內建更新驗證金鑰，請至官方發布頁手動更新。";
+      return { status: this.result("MANUAL", message, version) };
+    }
     const raw = await metadata(await getResponse(this.fetcher, assetUrl(version, MANIFEST), 30_000));
     const manifest = verifyPortableManifest(raw, publicKey, version);
     return {

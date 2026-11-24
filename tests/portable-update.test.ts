@@ -18,7 +18,10 @@ const manifest = {
 
 function signed(payload: unknown): string {
   const bytes = Buffer.from(JSON.stringify(payload));
-  return JSON.stringify({ payload: bytes.toString("base64"), signature: sign(null, bytes, privateKey).toString("base64") });
+  return JSON.stringify({
+    payload: bytes.toString("base64"),
+    signature: sign(null, bytes, privateKey).toString("base64"),
+  });
 }
 
 function mockFetch(bytes = archive) {

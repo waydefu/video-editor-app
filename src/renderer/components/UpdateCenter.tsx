@@ -58,6 +58,7 @@ export function UpdateCenter({ version }: { version?: string }) {
     }
   };
 
+  const message = status?.message ?? "尚未檢查更新。";
   const available = status && ["AVAILABLE", "MANUAL", "READY", "PREPARED", "ARMED"].includes(status.state);
   return (
     <>
@@ -91,7 +92,7 @@ export function UpdateCenter({ version }: { version?: string }) {
             <div className="remote-security-note" aria-live="polite">
               <strong>目前版本 v{version ?? "…"}</strong>
               {status?.latestVersion && <p>正式發布版本 v{status.latestVersion}</p>}
-              <p>{busy ? "正在處理更新，請勿關閉程式。" : (status?.message ?? "尚未檢查更新。")}</p>
+              <p>{busy ? "正在處理更新，請勿關閉程式。" : message}</p>
               {busy && <progress aria-label="更新作業進行中" />}
               {error && <p role="alert">{error}</p>}
               <p>
