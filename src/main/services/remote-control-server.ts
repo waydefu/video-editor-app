@@ -23,6 +23,7 @@ interface SessionRecord {
   csrfHash: string;
   cancelNonceHash?: string;
   cancelNonceExpiresAt?: number;
+  cancelJobGeneration?: number;
 }
 
 interface RateRecord {
@@ -102,7 +103,7 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
   return parsed as Record<string, unknown>;
 }
 
-const REMOTE_HTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>SceneryWalker 遠端控制</title><link rel="stylesheet" href="/styles.css"></head><body><main><header><p>SceneryWalker</p><h1>iPhone 遠端控制</h1><span id="connection">正在配對…</span></header><section class="card"><h2 id="project">—</h2><div class="progress"><i id="bar"></i></div><strong id="percent">0%</strong><div class="times"><span>已耗時<b id="elapsed">—</b></span><span>預估剩餘<b id="eta">—</b></span></div><p id="segment">尚未開始</p></section><section class="grid" id="metrics"></section><section class="error" id="error" hidden></section><section class="actions"><button class="start" data-command="start">開始轉檔</button><button class="pause" data-command="pause">安全暫停</button><button class="resume" data-command="resume">繼續</button><button class="cancel" data-command="cancel">取消</button></section><p class="note" id="pauseDetail">暂停会先完成当前 FFmpeg 分段，不会强制中止编码器。</p></main><dialog id="cancelDialog"><h2>确定取消转档？</h2><p>目前分段会依既有安全流程结束或保存 checkpoint。</p><div><button id="keep">继续转档</button><button id="confirmCancel" class="cancel">确定取消</button></div></dialog><script src="/app.js"></script></body></html>`;
+const REMOTE_HTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>SceneryWalker 遠端控制</title><link rel="stylesheet" href="/styles.css"></head><body><main><header><p>SceneryWalker</p><h1>iPhone 遠端控制</h1><span id="connection">正在配對…</span></header><section class="card"><h2 id="project">—</h2><div class="progress"><i id="bar"></i></div><strong id="percent">0%</strong><div class="times"><span>已耗時<b id="elapsed">—</b></span><span>目前階段預估剩餘<b id="eta">—</b></span></div><p id="segment">尚未開始</p></section><section class="grid" id="metrics"></section><section class="error" id="error" hidden></section><section class="actions"><button class="start" data-command="start">開始轉檔</button><button class="pause" data-command="pause">安全暫停</button><button class="resume" data-command="resume">繼續</button><button class="cancel" data-command="cancel">取消</button></section><p class="note" id="pauseDetail">暂停会先完成当前 FFmpeg 分段，不会强制中止编码器。</p></main><dialog id="cancelDialog"><h2>确定取消转档？</h2><p>目前分段会依既有安全流程结束或保存 checkpoint。</p><div><button id="keep">继续转档</button><button id="confirmCancel" class="cancel">确定取消</button></div></dialog><script src="/app.js"></script></body></html>`;
 
 const REMOTE_CSS = `:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#08131c;color:#edf7ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(160deg,#08131c,#15102a);padding:max(18px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom))}main{max-width:560px;margin:auto}header p{color:#84ccff;margin:0;font-weight:800}h1{font-size:1.65rem;margin:.2rem 0}.card,.grid>div,.error{background:#111e2a;border:1px solid #29445d;border-radius:18px;padding:16px;margin-top:14px}.card h2{margin:0 0 12px}.progress{height:14px;border-radius:20px;background:#253341;overflow:hidden}.progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,#318aff,#9b6dff,#ff70b8)}#percent{font-size:1.8rem}.times{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.times span,.grid span{display:flex;flex-direction:column;color:#a9bfd0}.times b,.grid b{color:#fff;font-size:1.1rem}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid>div{margin:0;min-width:0}.error{border-color:#f66;color:#ffd8d8}.actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}button{min-height:58px;border:0;border-radius:16px;color:#fff;font-weight:800;font-size:1.08rem}.start{background:#1979e8}.pause{background:#8a57d8}.resume{background:#297f68}.cancel{background:#bb3448}button:disabled{opacity:.35}.note{color:#adc0d0;font-size:.9rem}dialog{background:#15222e;color:#fff;border:1px solid #4b6072;border-radius:20px;max-width:calc(100% - 32px)}dialog div{display:flex;gap:12px}dialog button{padding:0 18px;background:#44515e}@media(max-width:390px){.grid{grid-template-columns:1fr}.times{grid-template-columns:1fr}.actions{grid-template-columns:1fr}}`;
 
@@ -116,7 +117,7 @@ export class RemoteControlServer {
   private addresses: string[] = [];
   private qrDataUrl?: string;
   private readonly sessions = new Map<string, SessionRecord>();
-  private readonly clients = new Set<ServerResponse>();
+  private readonly clients = new Map<ServerResponse, SessionRecord>();
   private readonly rates = new Map<string, RateRecord>();
   private readonly pairingRates = new Map<string, RateRecord>();
   private unsubscribe?: () => void;
@@ -163,9 +164,11 @@ export class RemoteControlServer {
   async stop(): Promise<RemoteControlStatus> {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    for (const client of this.clients) client.end();
+    for (const client of this.clients.keys()) client.end();
     this.clients.clear();
     this.sessions.clear();
+    this.rates.clear();
+    this.pairingRates.clear();
     this.pairing = undefined;
     this.rawPairingToken = undefined;
     this.qrDataUrl = undefined;
@@ -246,13 +249,18 @@ export class RemoteControlServer {
     return current.count <= 10;
   }
 
+  private sessionValid(session: SessionRecord): boolean {
+    const now = Date.now();
+    return session.expiresAt > now && now - session.lastSeenAt <= SESSION_IDLE_MS;
+  }
+
   private authenticate(request: IncomingMessage): SessionRecord | undefined {
     const match = /(?:^|;\s*)scenery_remote=([A-Za-z0-9_-]{40,})(?:;|$)/.exec(request.headers.cookie ?? "");
     if (!match) return undefined;
     const key = hash(match[1]);
     const session = this.sessions.get(key);
     const now = Date.now();
-    if (!session || session.expiresAt <= now || now - session.lastSeenAt > SESSION_IDLE_MS) {
+    if (!session || !this.sessionValid(session)) {
       this.sessions.delete(key);
       return undefined;
     }
@@ -337,9 +345,12 @@ export class RemoteControlServer {
         });
         const initial = this.renderState.snapshot();
         response.write(`id: ${initial.revision}\nevent: snapshot\ndata:${JSON.stringify(initial)}\n\n`);
-        const keepAlive = setInterval(() => response.write(": keepalive\n\n"), 15_000);
-        this.clients.add(response);
-        request.once("close", () => {
+        const keepAlive = setInterval(() => {
+          if (!this.sessionValid(authenticatedSession)) response.end();
+          else response.write(": keepalive\n\n");
+        }, 15_000);
+        this.clients.set(response, authenticatedSession);
+        response.once("close", () => {
           clearInterval(keepAlive);
           this.clients.delete(response);
         });
@@ -354,6 +365,7 @@ export class RemoteControlServer {
         const cancelNonce = token(24);
         authenticatedSession.cancelNonceHash = hash(cancelNonce);
         authenticatedSession.cancelNonceExpiresAt = Date.now() + 30_000;
+        authenticatedSession.cancelJobGeneration = this.renderState.currentJobGeneration();
         json(response, 200, {
           cancelNonce,
           expiresAt: new Date(authenticatedSession.cancelNonceExpiresAt).toISOString(),
@@ -370,7 +382,9 @@ export class RemoteControlServer {
             typeof body.cancelNonce !== "string" ||
             !authenticatedSession.cancelNonceHash ||
             authenticatedSession.cancelNonceExpiresAt! <= Date.now() ||
-            hash(body.cancelNonce) !== authenticatedSession.cancelNonceHash)
+            hash(body.cancelNonce) !== authenticatedSession.cancelNonceHash ||
+            authenticatedSession.cancelJobGeneration !== this.renderState.currentJobGeneration() ||
+            !["RUNNING", "PAUSING", "PAUSED"].includes(this.renderState.snapshot().state))
         ) {
           json(response, 409, { error: "取消转档需要第二次确认。" });
           return;
@@ -378,6 +392,7 @@ export class RemoteControlServer {
         if (command === "cancel") {
           authenticatedSession.cancelNonceHash = undefined;
           authenticatedSession.cancelNonceExpiresAt = undefined;
+          authenticatedSession.cancelJobGeneration = undefined;
         }
         if (command === "start") await this.renderState.startPrepared();
         if (command === "pause") this.renderState.requestPause();
@@ -394,7 +409,10 @@ export class RemoteControlServer {
 
   private broadcast(snapshot: RemoteRenderSnapshot): void {
     const packet = `id: ${snapshot.revision}\nevent: snapshot\ndata:${JSON.stringify(snapshot)}\n\n`;
-    for (const client of this.clients) client.write(packet);
+    for (const [client, session] of this.clients) {
+      if (!this.sessionValid(session)) client.end();
+      else client.write(packet);
+    }
     this.notifyStatus();
   }
 }

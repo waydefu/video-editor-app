@@ -4,6 +4,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   ipcMain,
   powerSaveBlocker,
   protocol,
@@ -13,6 +14,7 @@ import {
   shell,
 } from "electron";
 import { registerIpc } from "./ipc";
+import { officialReleasesUrl, PortableUpdateService } from "./services/portable-update";
 import { pathToFileURL } from "node:url";
 import { isTrustedAppNavigation } from "./services/trusted-navigation";
 import { ConcatRenderService } from "./services/concat-render";
@@ -321,6 +323,27 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(async () => {
+  const updates = new PortableUpdateService(
+    app.getVersion(),
+    app.isPackaged && process.platform === "win32" && !process.env.APP_TEST_USER_DATA_PATH,
+    path.join(app.getPath("userData"), "updates"),
+    path.join(process.resourcesPath, "assets", "update-public-key.pem"),
+  );
+  ipcMain.handle("app:update-check", () => updates.check());
+  ipcMain.handle("app:update-download", () => updates.download());
+  ipcMain.handle("app:update-prepare", () => {
+    if (renderPowerGuard.isActive) throw new Error("請先完成轉檔，再準備新版。");
+    return updates.prepare();
+  });
+  ipcMain.handle("app:update-arm", () => updates.arm());
+  ipcMain.handle("app:update-disarm", () => updates.disarm());
+  ipcMain.handle("app:update-open-release", () => shell.openExternal(officialReleasesUrl));
+  ipcMain.handle("app:update-show-archive", async () => {
+    if (renderPowerGuard.isActive) throw new Error("轉檔尚未完成，請稍後切換新版。");
+    const archive = await updates.verifiedArchive();
+    if (renderPowerGuard.isActive) throw new Error("轉檔尚未完成，請稍後切換新版。");
+    shell.showItemInFolder(archive);
+  });
   configureAiModelCatalogRoot(app.getPath("userData"));
   const store = new ProjectStore(app.getPath("userData"));
   await store.initialize();
@@ -474,7 +497,7 @@ void app.whenReady().then(async () => {
       ? path.join(process.resourcesPath, "assets", "benchmark-render-modes.ps1")
       : path.join(app.getAppPath(), "scripts", "benchmark-render-modes.ps1"),
   );
-  registerIpc(
+  const sealForUpdate = registerIpc(
     store,
     sources,
     previews,
@@ -508,12 +531,35 @@ void app.whenReady().then(async () => {
       if (!window.isDestroyed()) window.webContents.send("power-action:status", status);
   });
   ipcMain.removeAllListeners("app:confirm-close");
-  ipcMain.on("app:confirm-close", (event) => {
+  let updateClosing = false;
+  ipcMain.on("app:confirm-close", async (event) => {
     const target = BrowserWindow.fromWebContents(event.sender);
-    if (!target || target.isDestroyed()) return;
+    if (!target || target.isDestroyed() || updateClosing) return;
     if (renderPowerGuard.isActive) {
       target.webContents.send("app:close-requested");
       return;
+    }
+    if (updates.isArmed) {
+      updateClosing = true;
+      let release: (() => void) | undefined;
+      try {
+        release = sealForUpdate();
+        const executable = await updates.verifiedLaunch();
+        await remoteControl.stop();
+        if (!updates.isArmed || target.isDestroyed()) throw new Error("已取消版本切換。");
+        app.relaunch({ execPath: executable, args: [] });
+      } catch (error) {
+        release?.();
+        updateClosing = false;
+        await updates.disarm();
+        await dialog.showMessageBox({
+          type: "warning",
+          title: "未切換新版",
+          message: error instanceof Error ? error.message : String(error),
+          detail: "舊版仍在執行，請完成作業或重新準備更新。",
+        });
+        return;
+      }
     }
     if (postSuccessPower.isScheduled) {
       postSuccessPower.cancel("使用者确认关闭 App；已明确取消尚未执行的电源动作。");

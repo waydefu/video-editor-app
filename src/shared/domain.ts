@@ -2313,8 +2313,22 @@ export interface ExternalOpenResult {
   message?: string;
 }
 
+export interface AppUpdateStatus {
+  state: "DISABLED" | "CURRENT" | "MANUAL" | "AVAILABLE" | "READY" | "PREPARED" | "ARMED";
+  currentVersion: string;
+  latestVersion?: string;
+  message: string;
+}
+
 export interface AppApi {
   getAppInfo(): Promise<AppInfo>;
+  checkAppUpdate?(): Promise<AppUpdateStatus>;
+  downloadAppUpdate?(): Promise<AppUpdateStatus>;
+  prepareAppUpdate?(): Promise<AppUpdateStatus>;
+  armAppUpdate?(): Promise<AppUpdateStatus>;
+  disarmAppUpdate?(): Promise<AppUpdateStatus>;
+  openAppUpdateRelease?(): Promise<void>;
+  showAppUpdateArchive?(): Promise<void>;
   confirmAppClose(): void;
   moveCursorToSafeAction?(rect: { x: number; y: number; width: number; height: number }): void;
   onAppCloseRequested(callback: () => void): void;

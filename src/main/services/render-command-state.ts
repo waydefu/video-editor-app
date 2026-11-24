@@ -29,6 +29,8 @@ function redactLocalPaths(message: string): string {
 export class RenderCommandState {
   private readonly events = new EventEmitter();
   private revision = 0;
+  private jobGeneration = 0;
+  private launchPending = false;
   private prepared?: PreparedRenderRecord;
   private handlers?: RenderCommandHandlers;
   private pauseRequested = false;
@@ -58,7 +60,20 @@ export class RenderCommandState {
     this.patch({ projectName });
   }
 
+  resetProject(projectName: string): void {
+    this.prepared = undefined;
+    this.jobGeneration += 1;
+    this.snapshotValue = this.blank(projectName);
+    this.events.emit("snapshot", this.snapshot());
+  }
+
+  currentJobGeneration(): number {
+    return this.jobGeneration;
+  }
+
   prepare(request: ConcatRenderRequest, outputDisplayPath: string): RemotePreparedRender {
+    if (this.launchPending || ["RUNNING", "PAUSING", "PAUSED"].includes(this.snapshotValue.state))
+      throw new Error("已有轉檔工作正在進行。");
     const record: PreparedRenderRecord = {
       request: structuredClone(request),
       preparedAt: new Date().toISOString(),
@@ -100,6 +115,7 @@ export class RenderCommandState {
   }
 
   markStarting(request: ConcatRenderRequest): void {
+    this.jobGeneration += 1;
     this.pauseRequested = false;
     this.prepared = undefined;
     this.patch({
@@ -125,6 +141,7 @@ export class RenderCommandState {
   }
 
   markResuming(mode: "LOW_MEMORY" | "NORMAL" | "HIGH_SPEED"): void {
+    this.jobGeneration += 1;
     this.pauseRequested = false;
     this.prepared = undefined;
     this.patch({
@@ -192,9 +209,10 @@ export class RenderCommandState {
       this.snapshotValue.state === "PAUSED"
     )
       throw new Error("目前已有转档工作执行中。");
+    if (this.launchPending) throw new Error("轉檔正在預檢，請稍候。");
     const request = structuredClone(this.prepared.request);
     this.prepared = undefined;
-    void this.handlers.startPrepared(request).catch((error) => this.markFailed(error));
+    this.launch(() => this.handlers!.startPrepared(request));
   }
 
   async resumeCheckpoint(): Promise<void> {
@@ -204,7 +222,22 @@ export class RenderCommandState {
       return;
     }
     if (this.snapshotValue.state === "RUNNING") throw new Error("目前转档没有暂停。");
-    void this.handlers.resumeCheckpoint().catch((error) => this.markFailed(error));
+    this.launch(() => this.handlers!.resumeCheckpoint());
+  }
+
+  private launch(operation: () => Promise<ConcatRenderResult>): void {
+    if (this.launchPending) throw new Error("轉檔正在預檢，請稍候。");
+    this.launchPending = true;
+    const generation = this.jobGeneration;
+    void operation()
+      .catch((error) => {
+        // A rejected competing command must not mark another job as failed.
+        if (generation === this.jobGeneration && !["RUNNING", "PAUSING", "PAUSED"].includes(this.snapshotValue.state))
+          this.markFailed(error);
+      })
+      .finally(() => {
+        this.launchPending = false;
+      });
   }
 
   requestPause(): void {

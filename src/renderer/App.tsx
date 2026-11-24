@@ -38,6 +38,7 @@ import { WatermarkSettingsModal } from "./components/WatermarkSettingsModal";
 import { MaterialSubtitleAnalysisModal } from "./components/MaterialSubtitleAnalysisModal";
 import { SafeDefaultButton } from "./components/SafeDefaultButton";
 import { RemoteControlModal } from "./components/RemoteControlModal";
+import { UpdateCenter } from "./components/UpdateCenter";
 import { formatBytes } from "./format";
 import {
   applyGridOutputIncludeIntro,
@@ -786,9 +787,7 @@ export function App() {
               ↷ 重做
             </button>
           </div>
-          <span className="version-pill" aria-label={`軟體版本 ${appInfo?.version ?? "讀取中"}`}>
-            版本 v{appInfo?.version ?? "…"}
-          </span>
+          <UpdateCenter version={appInfo?.version} />
           <button
             className="settings-button display-settings-button"
             type="button"

@@ -141,6 +141,35 @@ describe("RemoteControlServer", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it("rejects a cancel confirmation issued for a previous render", async () => {
+    const state = new RenderCommandState("LAN Project");
+    const cancel = vi.fn(async () => undefined);
+    state.setHandlers({ startPrepared: vi.fn(), resumeCheckpoint: vi.fn(), cancel });
+    const request = { outputToken: "x", resolution: "1080P" } as ConcatRenderRequest;
+    state.markStarting(request);
+    const auth = await paired(new RemoteControlServer(state));
+    const headers = {
+      Cookie: auth.cookie,
+      Origin: auth.origin,
+      "X-Scenery-CSRF": auth.csrf,
+      "Content-Type": "application/json",
+    };
+    const intent = await fetch(new URL("/api/command/cancel-intent", auth.origin), {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    const { cancelNonce } = (await intent.json()) as { cancelNonce: string };
+    state.markStarting(request);
+    const response = await fetch(new URL("/api/command/cancel", auth.origin), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ confirmation: "CANCEL", cancelNonce }),
+    });
+    expect(response.status).toBe(409);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it("rotates pairing and invalidates every prior session across a stop/restart", async () => {
     const state = new RenderCommandState("LAN Project");
     const server = new RemoteControlServer(state);
