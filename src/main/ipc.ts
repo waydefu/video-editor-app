@@ -1,3 +1,4 @@
+import { RenderAdmission } from "./services/render-admission";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -174,6 +175,7 @@ export function registerIpc(
 ): void {
   let importController: AbortController | undefined;
   let concatController: AbortController | undefined;
+  const renderAdmission = new RenderAdmission();
   let introController: AbortController | undefined;
   let subtitleExportController: AbortController | undefined;
   let aiSubtitleController: AbortController | undefined;
@@ -277,7 +279,10 @@ export function registerIpc(
   let youtubeAuthController: AbortController | undefined;
   let youtubeUploadController: AbortController | undefined;
   const previewControllers = new Map<string, AbortController>();
-  const outputTokens = new Map<string, { outputPath: string; createdAt: number; allowOverwrite: boolean }>();
+  const outputTokens = new Map<
+    string,
+    { outputPath: string; createdAt: number; allowOverwrite: boolean; projectId: string }
+  >();
   const thumbnailTokens = new Map<string, { outputPath: string; createdAt: number; format: "jpg" | "png" }>();
   const subtitleOutputTokens = new Map<
     string,
@@ -476,6 +481,8 @@ export function registerIpc(
   const unsubscribeProjectChanges = store.subscribe((change) => {
     if (change.projectId !== lastActiveProjectId) {
       lastActiveProjectId = change.projectId;
+      outputTokens.clear();
+      renderCommands.resetProject(change.project.name);
       lastManualSubtitleVideoPath = undefined;
       explicitSubtitleVideoPath = undefined;
       resumedSubtitleSelectionReason = undefined;
@@ -528,7 +535,13 @@ export function registerIpc(
       activeSubtitleOperations -= 1;
     }
   };
+  const withRenderAdmission = <T>(operation: () => Promise<T>): Promise<T> =>
+    renderAdmission.run(async () => {
+      if (projectSwitchInProgress) throw new Error("專案正在切換，請完成後再轉檔。");
+      return operation();
+    });
   const assertNoRunningProjectJobs = () => {
+    if (renderAdmission.busy) throw new Error("轉檔或資源作業正在進行，請完成後再切換專案。");
     if (projectSwitchInProgress) throw new Error("已有專案開啟或另存作業正在執行，請在完成後重試。");
     if (
       activeSubtitleOperations > 0 ||
@@ -623,7 +636,7 @@ export function registerIpc(
     return userPreferences.update(update);
   });
   ipcMain.handle("render-temp:choose", async (event) => {
-    if (concatController) throw new Error("转档进行中，暂时不能切换 Render Temporary Folder。");
+    if (concatController || renderAdmission.busy) throw new Error("转档进行中，暂时不能切换 Render Temporary Folder。");
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const current = userPreferences.snapshot().renderDefaults.renderTemporaryFolder ?? app.getPath("temp");
     const options: Electron.OpenDialogOptions = {
@@ -643,7 +656,7 @@ export function registerIpc(
     return validated;
   });
   ipcMain.handle("render-temp:validate", async (_event, targetPath: string) => {
-    if (concatController) throw new Error("转档进行中，暂时不能切换 Render Temporary Folder。");
+    if (concatController || renderAdmission.busy) throw new Error("转档进行中，暂时不能切换 Render Temporary Folder。");
     return validateRenderTemporaryFolder(targetPath);
   });
   ipcMain.handle("render-temp:list", async (): Promise<RenderTempLocationStatus[]> => {
@@ -660,7 +673,7 @@ export function registerIpc(
     );
   });
   ipcMain.handle("render-temp:choose-location", async (event) => {
-    if (concatController) throw new Error("轉檔進行中，暫時不能切換 Render TEMP。");
+    if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，暫時不能切換 Render TEMP。");
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options: Electron.OpenDialogOptions = {
       title: "選擇 Render TEMP 資料夾",
@@ -672,7 +685,7 @@ export function registerIpc(
     return validateRenderTemporaryFolder(result.filePaths[0]);
   });
   ipcMain.handle("render-temp:set-locations", async (_event, locations: RenderTempLocationConfig[]) => {
-    if (concatController) throw new Error("轉檔進行中，暫時不能切換 Render TEMP。");
+    if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，暫時不能切換 Render TEMP。");
     for (const item of locations) await validateRenderTemporaryFolder(item.path);
     await userPreferences.setRenderTempLocations(locations);
     const primary = locations.find((item) => item.role === "PRIMARY");
@@ -899,6 +912,8 @@ export function registerIpc(
   });
   ipcMain.handle("audio-preview:cancel", () => audioPreviewController?.abort());
   ipcMain.handle("concat:choose-output", async (event, suggestedName: string) => {
+    if (projectSwitchInProgress) throw new Error("專案正在切換，請稍後再試。");
+    const projectId = store.getProject().id;
     for (const [token, item] of outputTokens) {
       if (Date.now() - item.createdAt > 30 * 60 * 1000) outputTokens.delete(token);
     }
@@ -916,10 +931,14 @@ export function registerIpc(
       path.extname(result.filePath).toLowerCase() === ".mp4" ? result.filePath : `${result.filePath}.mp4`;
     await userPreferences.rememberDirectory("PREVIEW_OUTPUT", outputPath);
     const token = randomUUID();
-    outputTokens.set(token, { outputPath, createdAt: Date.now(), allowOverwrite: true });
+    if (projectSwitchInProgress || store.getProject().id !== projectId)
+      throw new Error("選擇輸出位置期間已切換專案，請重新選擇。");
+    outputTokens.set(token, { outputPath, createdAt: Date.now(), allowOverwrite: true, projectId });
     return { token, displayPath: outputPath };
   });
   ipcMain.handle("concat:prepare-output", async (_event, suggestedName: string) => {
+    if (projectSwitchInProgress) throw new Error("專案正在切換，請稍後再試。");
+    const projectId = store.getProject().id;
     for (const [token, item] of outputTokens)
       if (Date.now() - item.createdAt > 30 * 60 * 1000) outputTokens.delete(token);
     const fallbackDirectory = app.getPath("videos");
@@ -929,13 +948,19 @@ export function registerIpc(
     await mkdir(directory, { recursive: true });
     const outputPath = await nextAvailableOutputPath(directory, safePreviewFileName(suggestedName));
     const token = randomUUID();
-    outputTokens.set(token, { outputPath, createdAt: Date.now(), allowOverwrite: false });
+    if (projectSwitchInProgress || store.getProject().id !== projectId)
+      throw new Error("選擇輸出位置期間已切換專案，請重新選擇。");
+    outputTokens.set(token, { outputPath, createdAt: Date.now(), allowOverwrite: false, projectId });
     return { token, displayPath: outputPath, automatic: true };
   });
   ipcMain.handle("concat:estimate", async (_event, request: ConcatRenderEstimateRequest) => {
     if (!request || typeof request.outputToken !== "string") throw new Error("轉檔預估要求格式無效。");
     const selectedOutput = outputTokens.get(request.outputToken);
-    if (!selectedOutput || Date.now() - selectedOutput.createdAt > 30 * 60 * 1000)
+    if (
+      !selectedOutput ||
+      selectedOutput.projectId !== store.getProject().id ||
+      Date.now() - selectedOutput.createdAt > 30 * 60 * 1000
+    )
       throw new Error("輸出位置授權已失效，請重新選擇儲存位置。");
     if (!RENDER_RESOLUTIONS.has(request.resolution)) throw new Error("預估解析度無效。");
     if (!RENDER_CODECS.has(request.videoCodec)) throw new Error("預估影片格式無效。");
@@ -945,7 +970,7 @@ export function registerIpc(
     renderHardware.getCapabilities(force === true),
   );
   ipcMain.handle("render-benchmark:run", async () => {
-    if (concatController) throw new Error("目前已有 App 轉檔進行中，效能測試不會搶用資源。");
+    if (concatController || renderAdmission.busy) throw new Error("目前已有 App 轉檔進行中，效能測試不會搶用資源。");
     const releasePowerGuard = renderPowerGuard.acquire();
     try {
       return await renderBenchmark.run();
@@ -959,11 +984,15 @@ export function registerIpc(
       if (!window.isDestroyed()) window.webContents.send("concat:progress", progress);
   };
 
-  const executeConcatStart = async (request: ConcatRenderRequest) => {
+  const executeConcatStartUnlocked = async (request: ConcatRenderRequest) => {
     if (concatController) throw new Error("已有一個串連預覽正在產出，請先等待或取消。");
     if (!request || typeof request.outputToken !== "string") throw new Error("串連預覽要求格式無效。");
     const selectedOutput = outputTokens.get(request.outputToken);
-    if (!selectedOutput || Date.now() - selectedOutput.createdAt > 30 * 60 * 1000) {
+    if (
+      !selectedOutput ||
+      selectedOutput.projectId !== store.getProject().id ||
+      Date.now() - selectedOutput.createdAt > 30 * 60 * 1000
+    ) {
       throw new Error("輸出位置授權已失效，請重新選擇儲存位置。");
     }
     if (!selectedOutput.allowOverwrite && (await stat(selectedOutput.outputPath).catch(() => undefined))) {
@@ -1074,11 +1103,18 @@ export function registerIpc(
         );
     }
   };
+  const executeConcatStart = (request: ConcatRenderRequest) =>
+    withRenderAdmission(() => executeConcatStartUnlocked(request));
   ipcMain.handle("concat:start", (_event, request: ConcatRenderRequest) => executeConcatStart(request));
   ipcMain.handle("remote-control:prepare-render", async (_event, request: ConcatRenderRequest) => {
+    if (renderAdmission.busy || projectSwitchInProgress) throw new Error("目前不能準備遠端轉檔。");
     if (!request || typeof request.outputToken !== "string") throw new Error("远端准备转档的要求格式无效。");
     const selectedOutput = outputTokens.get(request.outputToken);
-    if (!selectedOutput || Date.now() - selectedOutput.createdAt > 30 * 60 * 1000)
+    if (
+      !selectedOutput ||
+      selectedOutput.projectId !== store.getProject().id ||
+      Date.now() - selectedOutput.createdAt > 30 * 60 * 1000
+    )
       throw new Error("请先在 Windows 端选择仍有效的输出位置。");
     if (!RENDER_RESOLUTIONS.has(request.resolution)) throw new Error("转档解析度无效。");
     return renderCommands.prepare(request, selectedOutput.outputPath);
@@ -1102,7 +1138,7 @@ export function registerIpc(
     );
   });
   ipcMain.handle("concat:execute-resume-storage-plan", async (_event, request: ExecuteResumeStoragePlanRequest) => {
-    if (concatController) throw new Error("轉檔進行中，不能搬移 Resume Artifact。");
+    if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，不能搬移 Resume Artifact。");
     if (
       !request ||
       typeof request.checkpointId !== "string" ||
@@ -1118,7 +1154,7 @@ export function registerIpc(
     );
   });
   ipcMain.handle("concat:scan-remap-artifacts", async (_event, checkpointId: string) => {
-    if (concatController) throw new Error("轉檔進行中，不能重新對應 Resume Artifact。");
+    if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，不能重新對應 Resume Artifact。");
     if (typeof checkpointId !== "string" || !/^[a-f0-9-]{8,80}$/i.test(checkpointId))
       throw new Error("續轉識別碼無效。");
     return concatRenderer.scanAndRemapManuallyMovedArtifacts(
@@ -1153,7 +1189,7 @@ export function registerIpc(
   ipcMain.handle(
     "render-temp:execute-artifact-actions",
     async (_event, request: ExecuteTemporaryArtifactActionsRequest) => {
-      if (concatController) throw new Error("轉檔進行中，不能清理或搬移 TEMP Artifact。");
+      if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，不能清理或搬移 TEMP Artifact。");
       if (!request || !Array.isArray(request.artifactIds) || !request.artifactIds.length)
         throw new Error("未選擇要處理的 TEMP Artifact。");
       // The generic inventory currently exposes protected Resume artifacts only.
@@ -1162,13 +1198,15 @@ export function registerIpc(
       throw new Error("所選 TEMP Artifact 目前沒有可安全執行的獨立清理證據，已全部保留。");
     },
   );
-  ipcMain.handle("concat:discard-resume", async (_event, checkpointId: string) => {
-    if (typeof checkpointId !== "string" || !/^[a-f0-9-]{8,80}$/i.test(checkpointId))
-      throw new Error("續轉識別碼無效。");
-    await concatRenderer.discardResume(checkpointId);
-  });
+  ipcMain.handle("concat:discard-resume", (_event, checkpointId: string) =>
+    withRenderAdmission(async () => {
+      if (typeof checkpointId !== "string" || !/^[a-f0-9-]{8,80}$/i.test(checkpointId))
+        throw new Error("續轉識別碼無效。");
+      await concatRenderer.discardResume(checkpointId);
+    }),
+  );
   ipcMain.handle("concat:remap-resume", async (_event, request: RenderCheckpointRemapRequest) => {
-    if (concatController) throw new Error("轉檔進行中，不能重新對應 checkpoint。");
+    if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，不能重新對應 checkpoint。");
     if (!request || typeof request.checkpointId !== "string") throw new Error("重新對應要求格式無效。");
     const target = await validateRenderTemporaryFolder(request.toRoot);
     const remappedSegmentCount = await concatRenderer.remapResumeSegments(
@@ -1178,8 +1216,10 @@ export function registerIpc(
     );
     return { ...request, toRoot: target.path, remappedSegmentCount };
   });
-  ipcMain.handle("concat:discard-video-master", () => concatRenderer.discardReusableVideoMaster());
-  const executeConcatResume = async (checkpointId: string) => {
+  ipcMain.handle("concat:discard-video-master", () =>
+    withRenderAdmission(() => concatRenderer.discardReusableVideoMaster()),
+  );
+  const executeConcatResumeUnlocked = async (checkpointId: string) => {
     if (concatController) throw new Error("已有一個串連預覽正在產出，請先等待或取消。");
     if (typeof checkpointId !== "string" || !/^[a-f0-9-]{8,80}$/i.test(checkpointId))
       throw new Error("續轉識別碼無效。");
@@ -1193,12 +1233,12 @@ export function registerIpc(
           : `APP_PREEMPTIVE_DISK_PAUSE：目前沒有可安全執行的空間方案（同時峰值尚缺約 ${shortfall} GB）；checkpoint 與完成片段均已保留。`,
       );
     }
+    const offer = await concatRenderer.getResumeOffer();
     postSuccessPower.cancel("侦测到新的续转工作；已取消先前排定的电源动作。");
     const releasePowerGuard = renderPowerGuard.acquire();
     const controller = new AbortController();
     concatController = controller;
     const backgroundJobId = beginBackgroundJob("CONCAT_RENDER", "從 checkpoint 續轉片頭／正片預覽");
-    const offer = await concatRenderer.getResumeOffer();
     renderCommands.markResuming(offer?.mode ?? "NORMAL");
     let successfulResult: import("../shared/domain").ConcatRenderResult | undefined;
     try {
@@ -1246,14 +1286,16 @@ export function registerIpc(
         );
     }
   };
+  const executeConcatResume = (checkpointId?: string) =>
+    withRenderAdmission(async () => {
+      const id = checkpointId ?? (await concatRenderer.getResumeOffer())?.checkpointId;
+      if (!id) throw new Error("目前沒有可續轉的 checkpoint。");
+      return executeConcatResumeUnlocked(id);
+    });
   ipcMain.handle("concat:resume", (_event, checkpointId: string) => executeConcatResume(checkpointId));
   renderCommands.setHandlers({
     startPrepared: executeConcatStart,
-    resumeCheckpoint: async () => {
-      const offer = await concatRenderer.getResumeOffer();
-      if (!offer) throw new Error("目前没有可续转的 checkpoint。");
-      return executeConcatResume(offer.checkpointId);
-    },
+    resumeCheckpoint: () => executeConcatResume(),
     cancel: async () => concatController?.abort("USER_CANCEL"),
   });
   ipcMain.handle("concat:cancel", () => concatController?.abort("USER_CANCEL"));

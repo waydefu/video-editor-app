@@ -27,9 +27,6 @@ jobs:
           node-version: "24"
           cache: npm
 
-      - name: Install FFmpeg 8.1.2 (pinned to local toolchain; 9.x drops filter_complex_script)
-        run: choco install ffmpeg --version=8.1.2 -y
-
       - name: Install dependencies
         run: npm ci
 
@@ -42,11 +39,38 @@ jobs:
       - name: Typecheck (main + renderer)
         run: npm run typecheck
 
-      - name: Tests
-        run: npx vitest run
-
       - name: Build
         run: npm run build
+
+      - name: Install FFmpeg (retry transient Chocolatey feed errors)
+        shell: pwsh
+        run: |
+          $requested = "8.1.2"
+          $arguments = @("install", "ffmpeg", "-y", "--no-progress")
+          if ($requested -ne "latest") { $arguments += "--version=$requested" }
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            & choco @arguments
+            $binary = Get-Command ffmpeg -ErrorAction SilentlyContinue
+            if ($LASTEXITCODE -eq 0 -and $binary) {
+              $versionLine = (& ffmpeg -version | Select-Object -First 1)
+              if ($requested -eq "latest" -or $versionLine -match ("^ffmpeg version " + [regex]::Escape($requested) + "(?:\D|$)")) {
+                $installed = $true
+                break
+              }
+              Write-Warning "Expected FFmpeg $requested but PATH resolves to: $versionLine"
+            }
+            if ($attempt -lt 3) { Start-Sleep -Seconds (20 * $attempt) }
+          }
+          if (-not $installed) { throw "FFmpeg $requested cannot be installed after 3 attempts." }
+
+      - name: Show FFmpeg version
+        run: |
+          where.exe ffmpeg
+          ffmpeg -version
+
+      - name: Tests
+        run: npx vitest run
 
       - name: Pack dist output
         run: Compress-Archive -Path dist,dist-electron -DestinationPath scenerywalker-dist.zip

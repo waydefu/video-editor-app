@@ -53,7 +53,7 @@ export function RemoteControlModal({ onClose }: { onClose(): void }) {
           <p>
             只绑定画面列出的单一私人 LAN IP，不开放 Internet，也不提供文件浏览。QR Code
             内是十分钟有效、只能使用一次的配对凭证；手机取得的控制会话也会自动过期。第一次启动时 Windows
-            防火墙可能询问，请只允许私人网络。
+            防火墙可能询问，请只允许私人网络。本功能使用未加密 HTTP，请勿在公共 Wi-Fi 或不受信任的 LAN 使用。
           </p>
         </div>
         {!status?.enabled ? (
@@ -111,7 +111,7 @@ export function RemoteControlModal({ onClose }: { onClose(): void }) {
                     <b>{render.attemptElapsedMs === undefined ? "—" : formatRenderClock(render.attemptElapsedMs)}</b>
                   </span>
                   <span>
-                    ETA{" "}
+                    目前階段預估剩餘{" "}
                     <b>
                       {render.estimatedRemainingMs === undefined ? "—" : formatRenderClock(render.estimatedRemainingMs)}
                     </b>

@@ -18,6 +18,7 @@ jobs:
   verify:
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         # Pinned job mirrors the local toolchain; latest job guards
         # forward compatibility (e.g. FFmpeg 9 removed -filter_complex_script).
@@ -29,6 +30,21 @@ jobs:
         with:
           node-version: "24"
           cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dependency audit (block high and critical advisories)
+        run: npm audit --audit-level=high
+
+      - name: Format check (prettier)
+        run: npm run format:check
+
+      - name: Typecheck (main + renderer)
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
 
       - name: Install FFmpeg (retry transient Chocolatey feed errors)
         shell: pwsh
@@ -48,7 +64,7 @@ jobs:
               }
               Write-Warning "Expected FFmpeg $requested but PATH resolves to: $versionLine"
             }
-            if ($attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
+            if ($attempt -lt 3) { Start-Sleep -Seconds (20 * $attempt) }
           }
           if (-not $installed) { throw "FFmpeg $requested cannot be installed after 3 attempts." }
 
@@ -57,20 +73,5 @@ jobs:
           where.exe ffmpeg
           ffmpeg -version
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Dependency audit (block high and critical advisories)
-        run: npm audit --audit-level=high
-
-      - name: Format check (prettier)
-        run: npm run format:check
-
-      - name: Typecheck (main + renderer)
-        run: npm run typecheck
-
       - name: Tests
         run: npx vitest run
-
-      - name: Build
-        run: npm run build

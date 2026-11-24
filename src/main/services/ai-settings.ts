@@ -8,6 +8,7 @@ import type {
   GeminiReviewSettingsUpdate,
 } from "../../shared/domain";
 import { finalizePartialOutput } from "./atomic-output";
+import { SettingsTransaction } from "./settings-transaction";
 import { findCodexExecutableSync } from "./codex-cli-provider";
 
 export const DEFAULT_AI_ACCOUNT_ID = "openai-default";
@@ -93,6 +94,7 @@ export class AiSettingsStore {
   };
   private credentials: CredentialFile = { schemaVersion: 1, encryptedKeys: {} };
   private writeChain: Promise<void> = Promise.resolve();
+  private readonly transaction: SettingsTransaction;
 
   constructor(
     private readonly dataRoot: string,
@@ -103,10 +105,17 @@ export class AiSettingsStore {
   ) {
     this.settingsPath = path.join(dataRoot, "settings", "ai-providers.json");
     this.credentialsPath = path.join(dataRoot, "settings", "ai-credentials.encrypted.json");
+    this.transaction = new SettingsTransaction(
+      this.settingsPath,
+      this.credentialsPath,
+      (settings, credentials) => looksLikeSettings(settings) && looksLikeCredentials(credentials),
+      (filePath, value) => this.writeJson(filePath, value),
+    );
   }
 
   async initialize(): Promise<void> {
     await mkdir(path.dirname(this.settingsPath), { recursive: true });
+    await this.transaction.recover();
     try {
       const parsed: unknown = JSON.parse(await readFile(this.settingsPath, "utf8"));
       if (!looksLikeSettings(parsed)) throw new Error("AI 設定格式不相容");
@@ -325,9 +334,21 @@ export class AiSettingsStore {
 
   private async mutate(mutator: () => void): Promise<void> {
     const operation = this.writeChain.then(async () => {
-      mutator();
-      await this.writeJson(this.settingsPath, this.settings);
-      await this.writeJson(this.credentialsPath, this.credentials);
+      const previousSettings = structuredClone(this.settings);
+      const previousCredentials = structuredClone(this.credentials);
+      let nextSettings: typeof this.settings;
+      let nextCredentials: typeof this.credentials;
+      try {
+        mutator();
+        nextSettings = this.settings;
+        nextCredentials = this.credentials;
+      } finally {
+        this.settings = previousSettings;
+        this.credentials = previousCredentials;
+      }
+      await this.transaction.commit(nextSettings, nextCredentials);
+      this.settings = nextSettings;
+      this.credentials = nextCredentials;
     });
     this.writeChain = operation.catch(() => undefined);
     await operation;
