@@ -1,6 +1,8 @@
 # v0.88 深層功能／安全稽核 — 2026-11-22
 
-> 目標倉庫：`waydefu/video-editor-app`。所有修正位於 `fix/v088-project-isolation-20261121` / Draft PR #1。未合併 `main`，未修改原作者倉庫或使用者來源素材。
+> **狀態更新（2026-11-24）**：這是 11/22 撰寫的歷史稽核快照；PR #1 已於 11/23 合併至 `main`，後續 PR #3、#4 也已合併。下方「Draft／未合併」是當時狀態，不代表現在。最新第三輪結果見 `docs/THIRD_SWEEP_AUDIT_2026-11-24.md`。
+>
+> 目標倉庫：`waydefu/video-editor-app`。本輪原始修正位於 `fix/v088-project-isolation-20261121` / PR #1，未修改原作者倉庫或使用者來源素材。
 
 ## 證據範圍與方法
 

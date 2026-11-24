@@ -1,6 +1,8 @@
 # 第二輪深層稽核 — v0.88
 
-範圍：`waydefu/video-editor-app` 的 `fix/v088-project-isolation-20261121`，沿用 PR #1，不修改原作者倉庫或 `main`。
+> **狀態更新（2026-11-24）**：本文是 11/22 第二輪稽核時的歷史快照；PR #1 已於 11/23 合併，PR #3、#4 也已合併。以下「未合併」等敘述僅記錄當時。第三輪結果見 `docs/THIRD_SWEEP_AUDIT_2026-11-24.md`。
+
+範圍：`waydefu/video-editor-app` 的 `fix/v088-project-isolation-20261121`，沿用 PR #1；當時未修改原作者倉庫或 `main`。
 
 ## 起點
 

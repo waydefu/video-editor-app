@@ -1,9 +1,18 @@
 name: CI
 
+# Pull requests only need read access to repository contents.
+permissions:
+  contents: read
+
 on:
   push:
     branches: ["**"]
   pull_request:
+
+# Cancel obsolete runs for the same ref, but keep other branches and PRs independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -32,8 +41,12 @@ jobs:
             & choco @arguments
             $binary = Get-Command ffmpeg -ErrorAction SilentlyContinue
             if ($LASTEXITCODE -eq 0 -and $binary) {
-              $installed = $true
-              break
+              $versionLine = (& ffmpeg -version | Select-Object -First 1)
+              if ($requested -eq "latest" -or $versionLine -match ("^ffmpeg version " + [regex]::Escape($requested) + "(?:\D|$)")) {
+                $installed = $true
+                break
+              }
+              Write-Warning "Expected FFmpeg $requested but PATH resolves to: $versionLine"
             }
             if ($attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
           }

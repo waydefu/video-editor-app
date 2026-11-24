@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   ConcatRenderResult,
@@ -135,15 +135,14 @@ export class OutputHistoryStore {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
-        const backupPath = `${this.historyPath}.invalid-${Date.now()}`;
-        try {
-          await rename(this.historyPath, backupPath);
-        } catch {
-          /* Preserve startup even when backup is unavailable. */
-        }
+        // Never overwrite an unreadable or corrupt index without first preserving
+        // its original bytes. A failed backup must surface instead of losing history.
+        const backupPath = `${this.historyPath}.invalid-${Date.now()}-${randomUUID()}`;
+        await rename(this.historyPath, backupPath);
       }
-      this.history = { schemaVersion: 1, outputs: [] };
-      await this.saveNow();
+      const empty: StoredHistory = { schemaVersion: 1, outputs: [] };
+      await this.saveNow(empty);
+      this.history = empty;
     }
   }
 
@@ -269,16 +268,27 @@ export class OutputHistoryStore {
 
   private async mutate(mutator: (outputs: StoredOutput[]) => StoredOutput[]): Promise<void> {
     const operation = this.writeChain.then(async () => {
-      this.history = { schemaVersion: 1, outputs: mutator(structuredClone(this.history.outputs)) };
-      await this.saveNow();
+      const next: StoredHistory = {
+        schemaVersion: 1,
+        outputs: mutator(structuredClone(this.history.outputs)),
+      };
+      // Commit the in-memory snapshot only after its disk replacement succeeds.
+      // Otherwise a failed save appears successful until the next restart.
+      await this.saveNow(next);
+      this.history = next;
     });
     this.writeChain = operation.catch(() => undefined);
     await operation;
   }
 
-  private async saveNow(): Promise<void> {
-    const partial = `${this.historyPath}.${process.pid}.partial`;
-    await writeFile(partial, `${JSON.stringify(this.history, null, 2)}\n`, "utf8");
-    await rename(partial, this.historyPath);
+  private async saveNow(snapshot: StoredHistory = this.history): Promise<void> {
+    const partial = `${this.historyPath}.${randomUUID()}.partial`;
+    try {
+      await writeFile(partial, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+      await rename(partial, this.historyPath);
+    } finally {
+      // A failed write/rename must not leave stray partial indexes behind.
+      await rm(partial, { force: true }).catch(() => undefined);
+    }
   }
 }

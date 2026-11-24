@@ -63,6 +63,9 @@ export class StandaloneSubtitleStore {
       path.resolve(workspace.draftPath) !== path.resolve(this.draftPath(id, workspace.videoPath))
     )
       throw new Error("字幕草稿儲存路徑與工作區不一致，已拒絕寫入。");
+    // Preview authorization is a runtime capability, not trusted persisted data.
+    // Older workspace files may already contain a stale or forged preview URL.
+    delete workspace.previewUrl;
     if (authorizePreview) workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return workspace;
   }
@@ -121,7 +124,11 @@ export class StandaloneSubtitleStore {
         throw new Error("字幕時間必須依序、不重疊且位於所選影片內。");
     }
     workspace.cues = sorted;
-    await this.atomic(this.workspacePath(workspace.id), JSON.stringify(workspace, null, 2));
+    // Never store a transient source-media authorization in the workspace JSON.
+    await this.atomic(
+      this.workspacePath(workspace.id),
+      JSON.stringify({ ...workspace, previewUrl: undefined }, null, 2),
+    );
     await this.atomic(workspace.draftPath, sorted.length ? serializeSrt(sorted) : "");
     await this.atomic(this.latestPointerPath(workspace.ownerProjectId), JSON.stringify({ id: workspace.id }));
     workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);

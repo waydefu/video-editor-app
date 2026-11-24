@@ -68,7 +68,8 @@ export function runProcess(
       signal?.removeEventListener("abort", onAbort);
       reject(error);
     });
-    child.once("exit", (code) => {
+    // 'exit' can fire before stdout/stderr have drained; 'close' waits for both pipes.
+    child.once("close", (code) => {
       signal?.removeEventListener("abort", onAbort);
       if (signal?.aborted) {
         reject(new DOMException("工作已取消。", "AbortError"));
