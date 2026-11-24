@@ -29,8 +29,7 @@ export interface PortableManifest {
 }
 
 function versionParts(version: string): number[] {
-  if (!/^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/.test(version))
-    throw new Error("不支援的版本格式。");
+  if (!/^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/.test(version)) throw new Error("不支援的版本格式。");
   return version.split(".").map(Number);
 }
 

@@ -74,7 +74,12 @@ export function UpdateCenter({ version }: { version?: string }) {
       </button>
       {visible && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal remote-control-modal" role="dialog" aria-modal="true" aria-labelledby="update-title">
+          <section
+            className="modal remote-control-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="update-title"
+          >
             <header>
               <div>
                 <span className="eyebrow">SCENERYWALKER</span>
