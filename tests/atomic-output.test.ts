@@ -3,12 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const renameControl = vi.hoisted(() => ({ failures: [] as string[] }));
+const renameControl = vi.hoisted(() => ({ failures: [] as string[], lockedSource: "" }));
 
 vi.mock("node:fs/promises", async () => {
   const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
   return {
     ...actual,
+    rm: vi.fn(async (target: Parameters<typeof actual.rm>[0], options?: Parameters<typeof actual.rm>[1]) => {
+      if (target === renameControl.lockedSource) throw Object.assign(new Error("locked TEMP"), { code: "EBUSY" });
+      return actual.rm(target, options);
+    }),
     rename: vi.fn(async (from: string, to: string) => {
       const code = renameControl.failures.shift();
       if (code) throw Object.assign(new Error(`${code}: simulated`), { code });
@@ -22,6 +26,7 @@ import { finalizePartialOutput } from "../src/main/services/atomic-output";
 const roots: string[] = [];
 beforeEach(() => {
   renameControl.failures = [];
+  renameControl.lockedSource = "";
 });
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
@@ -73,5 +78,21 @@ describe("finalizePartialOutput", () => {
     await finalizePartialOutput(partial, output);
     expect(await readFile(output, "utf8")).toBe("new");
     expect(await readdir(root)).toEqual(["out.json"]);
+  });
+
+  it("does not report failure after cross-volume publication when source cleanup fails", async () => {
+    const { partial, output } = await setup("old");
+    renameControl.failures = ["EXDEV"];
+    renameControl.lockedSource = partial;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(finalizePartialOutput(partial, output)).resolves.toBeUndefined();
+      expect(await readFile(output, "utf8")).toBe("new");
+      expect(await readFile(partial, "utf8")).toBe("new");
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      renameControl.lockedSource = "";
+    }
   });
 });
