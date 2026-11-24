@@ -33,10 +33,13 @@ export async function finalizePartialOutput(partialPath: string, outputPath: str
       // atomic even when its audio mux temporary was scheduled elsewhere.
       await copyFile(partialPath, crossVolumePartial);
       await renameReplacing(crossVolumePartial, outputPath);
-      await rm(partialPath, { force: true });
+      // Publishing already succeeded; a locked TEMP must not report render failure.
+      await rm(partialPath, { force: true }).catch((error: unknown) => {
+        console.warn("已完成成品寫入，但無法清理來源暫存檔。", error);
+      });
     }
   } catch (error) {
-    await rm(crossVolumePartial, { force: true });
+    await rm(crossVolumePartial, { force: true }).catch(() => undefined);
     throw error;
   }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserUploadPlatform, PreviewOutputPurpose, PreviewOutputRecord } from "../../shared/domain";
 import { formatBytes } from "../format";
 
@@ -12,22 +12,33 @@ export interface OutputLibraryState {
 }
 
 export function useOutputLibrary(refreshKey = 0): OutputLibraryState {
-  const [outputs, setOutputs] = useState<PreviewOutputRecord[]>([]);
+  const [outputs, updateOutputs] = useState<PreviewOutputRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const requestId = useRef(0);
+  const setOutputs = useCallback((next: PreviewOutputRecord[]) => {
+    requestId.current += 1;
+    updateOutputs(next);
+    setLoading(false);
+  }, []);
   const refresh = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
     setError(undefined);
     try {
-      setOutputs((await window.sourceApp.getPreviewOutputHistory()).outputs);
+      const result = await window.sourceApp.getPreviewOutputHistory();
+      if (id === requestId.current) updateOutputs(result.outputs);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (id === requestId.current) setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   }, []);
   useEffect(() => {
     void refresh();
+    return () => {
+      requestId.current += 1;
+    };
   }, [refresh, refreshKey]);
   return { outputs, loading, error, refresh, setOutputs, setError };
 }
@@ -135,18 +146,27 @@ export function OutputLibrary({
   recentOnly = true,
   emptyText = "尚無仍存在的預覽檔。",
 }: Props) {
-  const { outputs, error, setError } = useOutputLibrary(refreshKey);
+  const { outputs, loading, error, setError, refresh } = useOutputLibrary(refreshKey);
+  const [notice, setNotice] = useState<string>();
   const visible = outputs
     .filter((item) => item.exists && outputPurposeMatches(item, purpose))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, recentOnly ? 3 : undefined);
   return (
-    <section className="output-library-compact" aria-label={title}>
+    <section className="output-library-compact" aria-label={title} aria-busy={loading}>
       <header>
         <h3>{title}</h3>
         <small>播放、開啟位置與複製路徑使用同一成品庫。</small>
       </header>
-      {!visible.length ? (
+      {!visible.length && loading ? (
+        <p className="inline-history-empty" role="status">
+          正在讀取預覽成品紀錄…
+        </p>
+      ) : !visible.length && error ? (
+        <button type="button" onClick={() => void refresh()}>
+          重新讀取成品紀錄
+        </button>
+      ) : !visible.length ? (
         <p className="inline-history-empty">{emptyText}</p>
       ) : (
         <ol>
@@ -169,10 +189,19 @@ export function OutputLibrary({
                   {output.resolution ? ` · ${output.resolution}` : ""}
                 </small>
               </div>
-              <OutputRecordActions output={output} onError={setError} />
+              <OutputRecordActions
+                output={output}
+                onError={setError}
+                onCopySuccess={() => setNotice("已複製完整檔案路徑。")}
+              />
             </li>
           ))}
         </ol>
+      )}
+      {notice && (
+        <p className="inline-notice" role="status">
+          {notice}
+        </p>
       )}
       {error && (
         <p className="inline-error" role="alert">

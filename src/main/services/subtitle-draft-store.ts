@@ -98,7 +98,7 @@ export async function writeSubtitleAiDraft(
     await rename(partialPath, draftPath);
     return { draftPath, cueCount: validated.length };
   } catch (error) {
-    await rm(partialPath, { force: true });
+    await rm(partialPath, { force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -164,15 +164,18 @@ export async function promoteSubtitleAiDraft(
   let backupPath: string | undefined;
   try {
     // Validate the stored bytes too, so a damaged or manually changed draft cannot be promoted.
-    const draftContents = await readFile(draftPath, "utf8");
-    validateDraftCueSequence(parseSrt(draftContents));
-    await copyFile(draftPath, partialPath, constants.COPYFILE_EXCL);
+    const draftContents = await readFile(draftPath);
+    validateDraftCueSequence(parseSrt(draftContents.toString("utf8")));
+    // Publish the exact bytes validated, rather than reading a possibly changed draft again.
+    await writeFile(partialPath, draftContents, { flag: "wx" });
     if (options.signal?.aborted) throw new DOMException("字幕草稿發佈已取消。", "AbortError");
 
-    if (choice === "SAVE_AS") {
-      // Linking is atomic and fails if another file appears at the selected destination.
+    if (choice === "SAVE_AS" || (choice === "BACKUP" && !officialExists)) {
+      // Never clobber a destination created after the preflight.
       await link(partialPath, outputPath);
-      await rm(partialPath, { force: true });
+      await rm(partialPath, { force: true }).catch((error: unknown) => {
+        console.warn("已發佈字幕，但無法清理暫存檔。", error);
+      });
     } else {
       if (choice === "BACKUP" && officialExists) backupPath = await backupOfficialWithoutClobber(officialPath);
       if (options.signal?.aborted) throw new DOMException("字幕草稿發佈已取消。", "AbortError");
@@ -180,7 +183,7 @@ export async function promoteSubtitleAiDraft(
     }
     return { cancelled: false, outputPath, backupPath };
   } catch (error) {
-    await rm(partialPath, { force: true });
+    await rm(partialPath, { force: true }).catch(() => undefined);
     throw error;
   }
 }
