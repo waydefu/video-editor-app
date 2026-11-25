@@ -6,6 +6,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  nativeTheme,
   powerSaveBlocker,
   protocol,
   safeStorage,
@@ -84,7 +85,19 @@ const renderPowerGuard = new RenderPowerGuard(powerSaveBlocker);
 const postSuccessPower = new PostSuccessPowerScheduler({ isBusy: () => renderPowerGuard.isActive });
 const confirmedCloseWindowIds = new Set<number>();
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  const automated =
+    process.env.APP_SMOKE_TEST === "1" ||
+    Boolean(process.env.APP_SCREENSHOT_PATH) ||
+    process.env.APP_SUBTITLE_UI_QA === "1" ||
+    Boolean(process.env.APP_SUBTITLE_REVIEW_QA);
+  const target = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+  // Render active: reuse the in-app close confirmation instead of quitting past it.
+  if (!automated && renderPowerGuard.isActive && target) {
+    event.preventDefault();
+    target.webContents.send("app:close-requested");
+    return;
+  }
   applicationQuitting = true;
   void remoteControlServer?.stop();
   postSuccessPower.stop();
@@ -109,6 +122,7 @@ function createWindow(): BrowserWindow {
     show: !automated,
     backgroundColor: "#0b1117",
     title: "SceneryWalker 素材整理",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -323,6 +337,8 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(async () => {
+  // The UI is dark-only; this makes the native Windows title bar dark too.
+  nativeTheme.themeSource = "dark";
   const updates = new PortableUpdateService(
     app.getVersion(),
     app.isPackaged && process.platform === "win32" && !process.env.APP_TEST_USER_DATA_PATH,
@@ -562,7 +578,7 @@ void app.whenReady().then(async () => {
       }
     }
     if (postSuccessPower.isScheduled) {
-      postSuccessPower.cancel("使用者确认关闭 App；已明确取消尚未执行的电源动作。");
+      postSuccessPower.cancel("使用者確認關閉 App；已明確取消尚未執行的電源動作。");
     }
     confirmedCloseWindowIds.add(target.id);
     target.close();

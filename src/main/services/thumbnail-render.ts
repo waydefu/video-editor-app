@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, rm, stat, writeFile, rename } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SourceAsset, ThumbnailCandidate } from "../../shared/domain";
 import { finalizePartialOutput } from "./atomic-output";

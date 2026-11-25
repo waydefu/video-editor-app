@@ -28,7 +28,6 @@ interface AssetCardProps {
   onOpenVolume(asset: SourceAsset): void;
   onOpenMaterialAnalysis(asset: SourceAsset): void;
   onOpenMediaInsertion(asset: SourceAsset): void;
-  onOpenMaterialEditor?(asset: SourceAsset, section: "VOLUME" | "INSERT"): void;
   mediaInsertions: Array<MediaInsertion & { insertedFileName: string; insertedKind: "VIDEO" | "IMAGE" }>;
   availableMediaCount: number;
   insertionOccurrenceCount?: number;
@@ -66,7 +65,6 @@ export function AssetCard({
   onOpenVolume,
   onOpenMaterialAnalysis,
   onOpenMediaInsertion,
-  onOpenMaterialEditor,
   mediaInsertions,
   availableMediaCount,
   insertionOccurrenceCount = 0,

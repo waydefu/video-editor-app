@@ -28,7 +28,3 @@ export function outputDimensions(resolution: PreviewResolution, portrait = false
   const dimensions = RESOLUTION_PROFILES[resolution].landscape;
   return portrait ? { width: dimensions.height, height: dimensions.width } : { ...dimensions };
 }
-
-export function outputAspectRatio(portrait = false): number {
-  return portrait ? 9 / 16 : 16 / 9;
-}

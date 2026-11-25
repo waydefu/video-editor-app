@@ -13,7 +13,6 @@ import type {
   SourceAsset,
   SubtitleCue,
   SubtitleTimelineScope,
-  VoiceInputLanguage,
   VoiceInputRequest,
   VoiceInputResult,
 } from "../../shared/domain";

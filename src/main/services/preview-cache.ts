@@ -597,7 +597,7 @@ export class PreviewCache {
       return;
     }
     if (!(await this.isValidProxy(filePath, signal))) {
-      throw new Error("MOV／影片已完成轉檔程序，但產生的 MP4 無法通過 H.264 播放驗證。");
+      throw new Error("MOV／影片已完成轉檔程式，但產生的 MP4 無法通過 H.264 播放驗證。");
     }
   }
 

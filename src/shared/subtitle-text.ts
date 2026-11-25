@@ -101,10 +101,6 @@ export function subtitleFrameShadowSize(fontSizePx: number, frameHeight: number)
   return Math.max(1, Math.round(subtitleFrameFontSize(fontSizePx, frameHeight) * 0.035));
 }
 
-export function subtitleFramePositionY(verticalPositionPercent: number, frameHeight: number): number {
-  return Math.round((Math.max(0, Math.min(100, verticalPositionPercent)) / 100) * frameHeight);
-}
-
 export interface ResolvedSubtitleCuePosition {
   xPercent: number;
   yPercent: number;

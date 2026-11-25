@@ -724,7 +724,7 @@ describe("concat render background mode", () => {
     const project = {
       schemaVersion: 20,
       id: "project-a",
-      name: "音讯确认",
+      name: "音訊確認",
       sourcePolicy: "READ_ONLY",
       previewPolicy: "DERIVED_CACHE_ONLY_NOT_MASTER",
       previewerVersion: "preview-v5-orientation-planar-safe",
@@ -863,7 +863,7 @@ describe("concat render background mode", () => {
       expect(api.estimateConcatRender).toHaveBeenLastCalledWith(expect.objectContaining({ lowMemorySegmented: false })),
     );
     expect(screen.getByRole("checkbox", { name: "YouTube 全自動上傳" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "启用成功后自动电源动作" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "啟用成功後自動電源動作" })).not.toBeChecked();
   });
 
   it("offers an explicit safer-mode choice for long low-disk projects", async () => {

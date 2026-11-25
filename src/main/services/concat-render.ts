@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   AudioProtectionOptions,
@@ -66,7 +66,7 @@ import { normalizeWatermarkSettings, watermarkAppliesToPurpose, watermarkRendere
 import { sanitizeAudioProtectionOptions, sanitizeBgmScopeSelection } from "./user-preferences";
 import { ClipSilenceDetector, type SilenceDetector } from "./silence-detection";
 import { usesBlurredCanvas } from "../../shared/output-canvas";
-import { RenderCheckpointStore, type RenderCheckpointRecord, type RenderCheckpointSegment } from "./render-checkpoint";
+import { RenderCheckpointStore, type RenderCheckpointRecord } from "./render-checkpoint";
 import { captureSystemResources } from "./system-resource";
 import { decideAdaptiveConcurrency, type AdaptiveConcurrencyState } from "./adaptive-render";
 import type { RenderCommandState } from "./render-command-state";
@@ -2468,7 +2468,7 @@ export class ConcatRenderService {
         if (signal?.aborted) throw new DOMException("分段轉檔已取消。", "AbortError");
         await this.renderCommands?.waitAtSafeBoundary(
           signal,
-          `已完成 ${completedJobs}/${totalJobs} 个中继分段，等待继续。`,
+          `已完成 ${completedJobs}/${totalJobs} 個中繼分段，等待繼續。`,
         );
         if (requestedDiskPause) throw requestedDiskPause;
         try {
@@ -2584,7 +2584,7 @@ export class ConcatRenderService {
           if (waveSize < 1) {
             const snapshot = await diskMonitor.snapshot("TEMP_BUDGET_WAIT", `${completedJobs + 1}/${totalJobs}`);
             throw new DiskSpacePauseError(
-              `Render TEMP 已达到使用者设定上限；已在安全边界暂停。请提高 TEMP 上限、清理可重建工作档，或改用低磁碟模式。`,
+              `Render TEMP 已達到使用者設定上限；已在安全邊界暫停。請提高 TEMP 上限、清理可重建工作檔，或改用低磁碟模式。`,
               snapshot,
             );
           }
@@ -2839,7 +2839,7 @@ export class ConcatRenderService {
         !preserveNativeAsset.mediaInfo?.audioChannelLayout
       ) {
         throw new Error(
-          "「保持原始多聲道」目前只适用于单支原生多声道影片的时间段输出；多片段、转场或混合配乐请改用 Original Stereo 或 Virtual Surround 5.1，避免破坏真正的原生多声道。",
+          "「保持原始多聲道」目前只適用於單支原生多聲道影片的時間段輸出；多片段、轉場或混合配樂請改用 Original Stereo 或 Virtual Surround 5.1，避免破壞真正的原生多聲道。",
         );
       }
     }
@@ -3544,7 +3544,7 @@ export class ConcatRenderService {
           percent: 96,
           outTimeMs: basePlan.expectedDurationMs,
           expectedDurationMs: basePlan.expectedDurationMs,
-          currentSegment: "重用已验证的画面／基础原音 master；不重新编码影片",
+          currentSegment: "重用已驗證的畫面／基礎原音 master；不重新編碼影片",
         });
       } else {
         let finalInputs = inputs;
@@ -3583,7 +3583,7 @@ export class ConcatRenderService {
           { inputsAreNormalized: segmentedActive, skipFinalDynamics: true },
         );
         if (Math.abs(plan.expectedDurationMs - basePlan.expectedDurationMs) > 2)
-          throw new Error("分段时间线验证失败，已停止且不会留下不完整成品。");
+          throw new Error("分段時間線驗證失敗，已停止且不會留下不完整成品。");
         let filterGraph = plan.filterGraph;
         let videoOutputLabel = plan.videoOutputLabel;
         if (subtitleAssPath) {
@@ -3652,7 +3652,7 @@ export class ConcatRenderService {
           outputPath: partialPath,
         });
         await assertDiskBoundary("BEFORE_BASE_MASTER", "畫面／基礎原音 master");
-        await this.renderCommands?.waitAtSafeBoundary(signal, "画面／基础原音 master 尚未启动，已在安全边界暂停。");
+        await this.renderCommands?.waitAtSafeBoundary(signal, "畫面／基礎原音 master 尚未啟動，已在安全邊界暫停。");
         runResult = await this.ffmpegRunner(
           this.ffmpegExecutable,
           args,
@@ -3669,7 +3669,7 @@ export class ConcatRenderService {
             : emitProgress,
           {
             outputPath,
-            currentSegment: "画面／基础原音 master（不含插入 BGM/SFX）",
+            currentSegment: "畫面／基礎原音 master（不含插入 BGM/SFX）",
             workingPaths: [checkpoint.workRoot, partialPath],
             segmentIndex: checkpoint.totalSegmentCount + 1,
             segmentCount: checkpoint.totalSegmentCount + 2,
@@ -3680,7 +3680,7 @@ export class ConcatRenderService {
             onProcessFinished: (pid) => activeFfmpegPids.delete(pid),
             getActiveProcessIds: () => [...activeFfmpegPids],
             encoderName: encoderName(videoCodec),
-            decoderName: segmentedActive ? "CPU software decode（已正規化中继）" : "CPU software decode",
+            decoderName: segmentedActive ? "CPU software decode（已正規化中繼）" : "CPU software decode",
             onResourceSnapshot: async (snapshot) => {
               checkpoint.latestResources = snapshot;
               const disk = await diskMonitor.snapshot("BASE_MASTER_RUNNING", "畫面／基礎原音 master");
@@ -3712,7 +3712,7 @@ export class ConcatRenderService {
         const cancelledBase = Boolean(runResult && runResult.cancelled);
         const baseInfo = await new MediaProbe().probe(partialPath);
         if (!baseInfo.videoCodec || (baseInfo.durationMs ?? 0) < 300)
-          throw new Error("画面／基础原音 master 验证失败。");
+          throw new Error("畫面／基礎原音 master 驗證失敗。");
         if (!cancelledBase) {
           const saved = await this.checkpoints.saveVideoBaseMaster(
             currentProject.id,
@@ -3790,13 +3790,13 @@ export class ConcatRenderService {
       await rm(audioPartialPath, { force: true });
       await rm(audioFilterScriptPath, { force: true });
       await assertDiskBoundary("BEFORE_FINAL_MUX", "最終音訊混音／封裝");
-      await this.renderCommands?.waitAtSafeBoundary(signal, "画面已完成，插入素材音讯后处理尚未启动，已安全暂停。");
+      await this.renderCommands?.waitAtSafeBoundary(signal, "畫面已完成，插入素材音訊後處理尚未啟動，已安全暫停。");
       if (audioProcessing.mode === "PRESERVE_MULTICHANNEL" && preserveNativeAsset) {
         if (insertionAudioPlan.bgmRanges.length || insertionAudioPlan.sfxEvents.length)
           throw new Error(
-            "保持原始多声道不可同时混入插入素材 BGM/SFX；请改用 Original Stereo 或 Virtual Surround 5.1。",
+            "保持原始多聲道不可同時混入插入素材 BGM/SFX；請改用 Original Stereo 或 Virtual Surround 5.1。",
           );
-        await this.renderCommands?.waitAtSafeBoundary(signal, "影片画面已完成，原始多声道封装尚未启动，已安全暂停。");
+        await this.renderCommands?.waitAtSafeBoundary(signal, "影片畫面已完成，原始多聲道封裝尚未啟動，已安全暫停。");
         const selection = request.clipSelections?.[0];
         const args = [
           "-hide_banner",
@@ -3871,9 +3871,9 @@ export class ConcatRenderService {
         );
         finalAudioInfo = await new MediaProbe().probe(audioPartialPath);
         if (finalAudioInfo.audioChannels !== preserveNativeAsset.mediaInfo?.audioChannels)
-          throw new Error("保持原始多聲道验证失败：输出声道数与来源不一致。");
+          throw new Error("保持原始多聲道驗證失敗：輸出聲道數與來源不一致。");
         if (Math.abs((finalAudioInfo.durationMs ?? 0) - completedDurationMs) > 750)
-          throw new Error("保持原始多声道后 A/V 时长差异超过安全范围，未覆盖成品。");
+          throw new Error("保持原始多聲道後 A/V 時長差異超過安全範圍，未覆蓋成品。");
       } else {
         const baseInfo = await new MediaProbe().probe(baseMasterPath!);
         const post = buildInsertionAudioPostArguments({
@@ -3895,7 +3895,7 @@ export class ConcatRenderService {
           percent: 96,
           outTimeMs: completedDurationMs,
           expectedDurationMs: completedDurationMs,
-          currentSegment: "插入 BGM/SFX＋最终 Audio Processing（影像 stream copy）",
+          currentSegment: "插入 BGM/SFX＋最終 Audio Processing（影像 stream copy）",
         });
         await this.ffmpegRunner(
           this.ffmpegExecutable,
@@ -3905,7 +3905,7 @@ export class ConcatRenderService {
           () => undefined,
           {
             outputPath,
-            currentSegment: "独立音讯混音与无损影像重新封装",
+            currentSegment: "獨立音訊混音與無損影像重新封裝",
             workingPaths: [baseMasterPath!, audioPartialPath],
             segmentIndex: checkpoint.totalSegmentCount + 2,
             segmentCount: checkpoint.totalSegmentCount + 2,
@@ -3943,11 +3943,11 @@ export class ConcatRenderService {
         finalAudioInfo = await new MediaProbe().probe(audioPartialPath);
         if (finalAudioInfo.audioChannels !== post.channels)
           throw new Error(
-            `音讯输出验证失败：预期 ${post.channels} 声道，实际 ${finalAudioInfo.audioChannels ?? "未知"} 声道。`,
+            `音訊輸出驗證失敗：預期 ${post.channels} 聲道，實際 ${finalAudioInfo.audioChannels ?? "未知"} 聲道。`,
           );
       }
       if (Math.abs((finalAudioInfo.durationMs ?? 0) - completedDurationMs) > 750)
-        throw new Error("音讯后处理 A/V 时长差异超过安全范围，已停止且不会覆盖成品。");
+        throw new Error("音訊後處理 A/V 時長差異超過安全範圍，已停止且不會覆蓋成品。");
       emitProgress({
         phase: "FINALIZING",
         percent: 99,

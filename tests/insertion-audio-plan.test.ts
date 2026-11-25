@@ -82,7 +82,7 @@ function fixture(): ProjectManifest {
     mainStartCue: { enabled: true, durationMs: 650 },
     photoSoundEffect: {
       id: "DUNES_CAMERA_SHUTTER_CLICK_14671",
-      displayName: "相机快门效果音（SFX）",
+      displayName: "相機快門效果音（SFX）",
       sourceProject: "licensed",
       sourceUrl: "",
       licenseUrl: "",

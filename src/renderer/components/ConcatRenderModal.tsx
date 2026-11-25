@@ -914,11 +914,11 @@ export function ConcatRenderModal({
   const prepareRemoteRender = async () => {
     if (!output || !window.sourceApp.prepareRemoteRender) return;
     if (!renderEstimate) {
-      setError("请先等待 Windows 端完成转档资源预估与输出预检。");
+      setError("請先等待 Windows 端完成轉檔資源預估與輸出預檢。");
       return;
     }
     if (isMain && prependIntro && !mainStartCardConfirmed) {
-      setError("请先确认正片开始提示页，再开放 iPhone 远端启动。");
+      setError("請先確認正片開始提示頁，再開放 iPhone 遠端啟動。");
       setShowMainStartCard(true);
       return;
     }
@@ -932,10 +932,10 @@ export function ConcatRenderModal({
       warnings?.length &&
       !window.confirm(
         [
-          "远端开始仍会执行最新系统预检。当前有以下提醒：",
+          "遠端開始仍會執行最新系統預檢。當前有以下提醒：",
           ...warnings.map((item) => `• ${item}`),
           "",
-          "仍要准备给 iPhone 启动吗？",
+          "仍要準備給 iPhone 啟動嗎？",
         ].join("\n"),
       )
     )
@@ -1348,7 +1348,7 @@ export function ConcatRenderModal({
     if (!window.sourceApp.discardConcatVideoMaster) return;
     if (
       !window.confirm(
-        "删除此专案最近一份可重建的画面 Master？来源与既有输出不会删除；下次只改音讯时将需要重新编码画面。",
+        "刪除此專案最近一份可重建的畫面 Master？來源與既有輸出不會刪除；下次只改音訊時將需要重新編碼畫面。",
       )
     )
       return;
@@ -1935,7 +1935,7 @@ export function ConcatRenderModal({
                       </ol>
                       <span>
                         {storageActionBusy
-                          ? "目前狀態：主程序正在依序執行整個流程；現有 API 不提供逐階段進度。"
+                          ? "目前狀態：主程式正在依序執行整個流程；現有 API 不提供逐階段進度。"
                           : "目前狀態：尚未開始"}
                       </span>
                     </div>
@@ -2903,7 +2903,7 @@ export function ConcatRenderModal({
                     <span className="setting-step">{isMain ? "07" : "06"}</span>
                     <div>
                       <h3>片頭／正片 Audio</h3>
-                      <p>UI 分區確認，底層仍共用 Original、Voice、BGM、SFX 与 Final Mix 时间线。</p>
+                      <p>UI 分區確認，底層仍共用 Original、Voice、BGM、SFX 與 Final Mix 時間線。</p>
                     </div>
                   </div>
                   <label className="subtitle-burn-toggle">
@@ -2923,7 +2923,7 @@ export function ConcatRenderModal({
                     />
                     <span>
                       <strong>啟用 BGM</strong>
-                      <small>取消只关闭 BGM，不会静音原音；离线曲目会在转档前明确阻挡。</small>
+                      <small>取消只關閉 BGM，不會靜音原音；離線曲目會在轉檔前明確阻擋。</small>
                     </span>
                   </label>
                   {isMain && (
@@ -3141,13 +3141,13 @@ export function ConcatRenderModal({
                 <div>
                   <span className="setting-step">{isClip ? "06" : isMain ? "10" : "09"}</span>
                   <div>
-                    <h3>成功后自动关机／休眠／睡眠</h3>
-                    <p>预设关闭。只有选定的成功事件完整结束后才倒数60秒；失败、取消、暂停或上传未完成绝不执行。</p>
+                    <h3>成功後自動關機／休眠／睡眠</h3>
+                    <p>預設關閉。只有選定的成功事件完整結束後才倒數60秒；失敗、取消、暫停或上傳未完成絕不執行。</p>
                   </div>
                 </div>
                 <label className="subtitle-burn-toggle">
                   <input
-                    aria-label="启用成功后自动电源动作"
+                    aria-label="啟用成功後自動電源動作"
                     type="checkbox"
                     checked={postSuccessPower.enabled}
                     disabled={rendering}
@@ -3156,7 +3156,7 @@ export function ConcatRenderModal({
                       if (
                         enabled &&
                         !window.confirm(
-                          "启用后，只有选定的成功事件完成才会倒数60秒执行电源动作。倒数期间可取消；失败、取消、暂停不会执行。确定启用吗？",
+                          "啟用後，只有選定的成功事件完成才會倒數60秒執行電源動作。倒數期間可取消；失敗、取消、暫停不會執行。確定啟用嗎？",
                         )
                       )
                         return;
@@ -3164,14 +3164,14 @@ export function ConcatRenderModal({
                     }}
                   />
                   <span>
-                    <strong>启用自动电源动作（预设不勾选）</strong>
-                    <small>设定会保存，但每次执行前仍会在这里清楚显示，并在成功后提供取消倒数。</small>
+                    <strong>啟用自動電源動作（預設不勾選）</strong>
+                    <small>設定會保存，但每次執行前仍會在這裡清楚顯示，並在成功後提供取消倒數。</small>
                   </span>
                 </label>
                 {postSuccessPower.enabled && (
                   <div className="post-success-power-options">
                     <fieldset disabled={rendering}>
-                      <legend>触发时机</legend>
+                      <legend>觸發時機</legend>
                       <label>
                         <input
                           type="radio"
@@ -3179,7 +3179,7 @@ export function ConcatRenderModal({
                           checked={postSuccessPower.trigger === "RENDER_SUCCESS"}
                           onChange={() => updatePostSuccessPower({ trigger: "RENDER_SUCCESS" })}
                         />
-                        转档完成后
+                        轉檔完成後
                       </label>
                       <label>
                         <input
@@ -3188,16 +3188,16 @@ export function ConcatRenderModal({
                           checked={postSuccessPower.trigger === "YOUTUBE_UPLOAD_SUCCESS"}
                           onChange={() => updatePostSuccessPower({ trigger: "YOUTUBE_UPLOAD_SUCCESS" })}
                         />
-                        YouTube 上传成功后
+                        YouTube 上傳成功後
                       </label>
                     </fieldset>
                     <fieldset disabled={rendering}>
-                      <legend>动作</legend>
+                      <legend>動作</legend>
                       {(
                         [
-                          ["SHUTDOWN", "自动关机"],
-                          ["HIBERNATE", "自动休眠（Hibernate）"],
-                          ["SLEEP", "自动睡眠（Sleep）"],
+                          ["SHUTDOWN", "自動關機"],
+                          ["HIBERNATE", "自動休眠（Hibernate）"],
+                          ["SLEEP", "自動睡眠（Sleep）"],
                         ] as const
                       ).map(([action, label]) => (
                         <label key={action}>
@@ -3213,8 +3213,8 @@ export function ConcatRenderModal({
                     </fieldset>
                     <p className="inline-warning" role="status">
                       {postSuccessPower.trigger === "YOUTUBE_UPLOAD_SUCCESS"
-                        ? "只认 YouTube 官方 API 回传成功；若要求缩图而缩图失败，会等待修复成功，不会仅凭打开浏览器或上传页面执行。"
-                        : "会在影片、字幕、音讯后处理与最终档案验证全部成功后触发，不会在 partial 写入或暂停点触发。"}
+                        ? "只認 YouTube 官方 API 回傳成功；若要求縮圖而縮圖失敗，會等待修復成功，不會僅憑打開瀏覽器或上傳頁面執行。"
+                        : "會在影片、字幕、音訊後處理與最終檔案驗證全部成功後觸發，不會在 partial 寫入或暫停點觸發。"}
                     </p>
                   </div>
                 )}
@@ -4008,7 +4008,7 @@ export function ConcatRenderModal({
                       }
                       onClick={() => void prepareRemoteRender()}
                     >
-                      {remotePreparedAt ? "已准备 iPhone 启动" : "准备 iPhone 远端启动"}
+                      {remotePreparedAt ? "已準備 iPhone 啟動" : "準備 iPhone 遠端啟動"}
                     </button>
                     <button
                       className="primary-button"
@@ -4065,7 +4065,7 @@ export function ConcatRenderModal({
                   <h4>片頭 Audio／正片 Audio</h4>
                   <p>
                     以下直接讀取與 Final FFmpeg 相同的 Audio
-                    Plan；時間已包含目前轉場重疊。配音目前无独立音轨，开关只作为未来配音 gate，不会改变素材原音。
+                    Plan；時間已包含目前轉場重疊。配音目前無獨立音軌，開關只作為未來配音 gate，不會改變素材原音。
                   </p>
                   {(["INTRO", "MAIN"] as const).map((scope) => {
                     const scoped = insertionAudioPlan.items.filter((item) => item.scope === scope);

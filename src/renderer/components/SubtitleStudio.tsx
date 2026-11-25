@@ -2192,7 +2192,7 @@ export function SubtitleStudio({ project, timelineDurationMs, onProjectUpdated, 
                         value={cue.text}
                         disabled={disabled}
                         spellCheck
-                        title="點入後可直接定位文字游標並修改；按右側確認才會立即保存這筆內容。"
+                        title="點入後可直接定位文字遊標並修改；按右側確認才會立即保存這筆內容。"
                         onFocus={() => {
                           if (selectedId !== cue.id) selectCue(cue);
                         }}

@@ -389,7 +389,7 @@ export class CodexCliStoryProvider {
               : error instanceof Error
                 ? error.message
                 : String(error);
-          throw new Error(`Codex／ChatGPT 字幕分析失敗：${detail || "執行程序未成功完成。"}`);
+          throw new Error(`Codex／ChatGPT 字幕分析失敗：${detail || "執行程式未成功完成。"}`);
         }
         let parsed: { results?: unknown };
         try {
@@ -477,7 +477,7 @@ export class CodexCliStoryProvider {
             : error instanceof Error
               ? error.message
               : String(error);
-        throw new Error(`Codex／ChatGPT 配樂研究失敗：${detail || "執行程序未成功完成。"}`);
+        throw new Error(`Codex／ChatGPT 配樂研究失敗：${detail || "執行程式未成功完成。"}`);
       }
       let parsed: { suggestions?: unknown; warnings?: unknown };
       try {

@@ -56,7 +56,7 @@ export const executeWindowsPowerAction: PowerExecutor = (command) =>
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`Windows 电源动作无法执行（exit code ${code ?? "unknown"}）。`));
+      else reject(new Error(`Windows 電源動作無法執行（exit code ${code ?? "unknown"}）。`));
     });
   });
 
@@ -106,7 +106,7 @@ export class PostSuccessPowerScheduler {
   notifySuccess(trigger: PostSuccessPowerTrigger, preference: PostSuccessPowerPreference): boolean {
     if (!preference.enabled || preference.trigger !== trigger) return false;
     if (this.isBusy()) {
-      this.setStatus({ state: "CANCELLED", message: "侦测到仍在执行的转档或上传，因此未安排电源动作。" });
+      this.setStatus({ state: "CANCELLED", message: "偵測到仍在執行的轉檔或上傳，因此未安排電源動作。" });
       return false;
     }
     this.clearTimer();
@@ -118,13 +118,13 @@ export class PostSuccessPowerScheduler {
       scheduledAt: new Date(now).toISOString(),
       executeAt: new Date(now + this.countdownSeconds * 1_000).toISOString(),
       secondsRemaining: this.countdownSeconds,
-      message: "成功条件已满足；可在倒数结束前取消。",
+      message: "成功條件已滿足；可在倒數結束前取消。",
     });
     this.interval = this.setIntervalFn(() => void this.tick(), 1_000);
     return true;
   }
 
-  cancel(message = "使用者已取消自动电源动作。"): PostSuccessPowerStatus {
+  cancel(message = "使用者已取消自動電源動作。"): PostSuccessPowerStatus {
     if (this.current.state !== "SCHEDULED") return this.status();
     const { action, trigger } = this.current;
     this.clearTimer();
@@ -151,7 +151,7 @@ export class PostSuccessPowerScheduler {
         action,
         trigger,
         secondsRemaining: 0,
-        message: "倒数期间开始了新的转档或上传；已安全取消电源动作。",
+        message: "倒數期間開始了新的轉檔或上傳；已安全取消電源動作。",
       });
       return;
     }
@@ -160,7 +160,7 @@ export class PostSuccessPowerScheduler {
       action,
       trigger,
       secondsRemaining: 0,
-      message: "正在执行 Windows 电源动作。",
+      message: "正在執行 Windows 電源動作。",
     });
     try {
       await this.executor(windowsPowerCommand(action));

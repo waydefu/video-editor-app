@@ -148,13 +148,23 @@ export function PreviewModal({
     }
   };
 
+  const editsDirty =
+    JSON.stringify(ranges) !== JSON.stringify(asset.mainExclusionRanges ?? []) ||
+    JSON.stringify(zoomSegments) !== JSON.stringify(asset.zoomSegments ?? []);
+  const requestClose = () => {
+    if (editsDirty && !window.confirm("有尚未儲存的排除區段或局部放大修改，確定要關閉並放棄嗎？")) return;
+    onClose();
+  };
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") requestCloseRef.current();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -371,7 +381,7 @@ export function PreviewModal({
       <div
         className="modal-backdrop"
         role="presentation"
-        onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+        onMouseDown={(event) => event.target === event.currentTarget && requestClose()}
       >
         <section
           className="preview-modal expanded-preview-modal"
@@ -384,7 +394,7 @@ export function PreviewModal({
               <span className="eyebrow">個別預覽 · 衍生代理</span>
               <h2>{asset.fileName}</h2>
             </div>
-            <button className="icon-button" type="button" onClick={onClose} aria-label="關閉">
+            <button className="icon-button" type="button" onClick={requestClose} aria-label="關閉">
               ×
             </button>
           </header>
@@ -871,7 +881,7 @@ export function PreviewModal({
                 <div className="exclusion-actions">
                   <span>
                     {selectedZoomId
-                      ? `已選擇片段時段 ${zoomSegments.findIndex((item) => item.id === selectedZoomId) + 1}；勾選項會在保存成功後執行。`
+                      ? `已選擇片段時段 ${zoomSegments.findIndex((item) => item.id === selectedZoomId) + 1}；勾選的項目會在保存成功後執行。`
                       : activeZoom
                         ? `目前預覽：放大 ${activeZoom.zoomPercent - 100}% · 中心 ${activeZoom.centerXPercent}% / ${activeZoom.centerYPercent}%`
                         : "請新增或點選一個片段時段。"}

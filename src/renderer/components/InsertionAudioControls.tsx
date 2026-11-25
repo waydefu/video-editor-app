@@ -59,7 +59,7 @@ export function InsertionAudioControls({
             <label
               key={key}
               title={
-                unavailableVoice ? "目前專案沒有獨立配音軌；开关已保存供未来配音使用，不会影响素材原音。" : undefined
+                unavailableVoice ? "目前專案沒有獨立配音軌；開關已保存供未來配音使用，不會影響素材原音。" : undefined
               }
             >
               <input
@@ -147,7 +147,7 @@ export function InsertionAudioControls({
           %
         </label>
       </div>
-      <small>SFX 与 BGM 可同时启用；SFX 不会停止、重启或静音 BGM。</small>
+      <small>SFX 與 BGM 可同時啟用；SFX 不會停止、重啟或靜音 BGM。</small>
       {asset.kind === "IMAGE" && settings.sfxEnabled && (
         <audio className="insertion-sfx-audition" controls preload="metadata" src={PHOTO_SOUND_PREVIEW_URL}>
           <track kind="captions" />

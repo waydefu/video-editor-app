@@ -416,7 +416,7 @@ describe("concat preview filter plan", () => {
     let firstRunCalls = 0;
     const failAtFinal = async (...args: Parameters<typeof runFfmpegWithProgress>) => {
       firstRunCalls += 1;
-      if (args[5]?.currentSegment === "独立音讯混音与无损影像重新封装")
+      if (args[5]?.currentSegment === "獨立音訊混音與無損影像重新封裝")
         throw new Error("FFmpeg 串連失敗：Error while filtering: Cannot allocate memory return code -12");
       return runFfmpegWithProgress(...args);
     };
@@ -532,7 +532,7 @@ describe("concat preview filter plan", () => {
     let audioFailureCalls = 0;
     const failPostAudio = async (...args: Parameters<typeof runFfmpegWithProgress>) => {
       audioFailureCalls += 1;
-      if (args[5]?.currentSegment === "独立音讯混音与无损影像重新封装") throw new Error("simulated post-audio failure");
+      if (args[5]?.currentSegment === "獨立音訊混音與無損影像重新封裝") throw new Error("simulated post-audio failure");
       return runFfmpegWithProgress(...args);
     };
     const audioOutput = path.join(resumeRoot, "resumed-post-audio.mp4");

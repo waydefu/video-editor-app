@@ -704,12 +704,12 @@ export function App() {
           <div>
             <strong>
               {powerActionStatus.state === "SCHEDULED"
-                ? `${powerActionStatus.secondsRemaining ?? 0} 秒后${powerActionStatus.action === "HIBERNATE" ? "自动休眠" : powerActionStatus.action === "SLEEP" ? "自动睡眠" : "自动关机"}`
+                ? `${powerActionStatus.secondsRemaining ?? 0} 秒後${powerActionStatus.action === "HIBERNATE" ? "自動休眠" : powerActionStatus.action === "SLEEP" ? "自動睡眠" : "自動關機"}`
                 : powerActionStatus.state === "EXECUTING"
-                  ? "正在执行自动电源动作"
+                  ? "正在執行自動電源動作"
                   : powerActionStatus.state === "FAILED"
-                    ? "自动电源动作失败"
-                    : "自动电源动作已取消"}
+                    ? "自動電源動作失敗"
+                    : "自動電源動作已取消"}
             </strong>
             <small>{powerActionStatus.message}</small>
           </div>
@@ -719,7 +719,7 @@ export function App() {
               type="button"
               onClick={() => void window.sourceApp.cancelPostSuccessPower?.()}
             >
-              取消自动电源动作
+              取消自動電源動作
             </button>
           )}
         </section>
@@ -1229,8 +1229,13 @@ export function App() {
       {materialEditorAsset && (
         <MaterialEditorModal
           asset={project.sources.find((asset) => asset.id === materialEditorAsset.id) ?? materialEditorAsset}
+          assets={sortedAssets}
           initialSection={materialEditorSection}
           onClose={() => setMaterialEditorAsset(undefined)}
+          onSelectAsset={(assetId) => {
+            const next = project.sources.find((asset) => asset.id === assetId);
+            if (next) setMaterialEditorAsset(next);
+          }}
           onOpenSection={(section) => {
             setMaterialEditorSection(section);
             if (section === "VOLUME") {
@@ -1416,14 +1421,14 @@ export function App() {
               {renderInProgress
                 ? "轉檔完成前不能關閉"
                 : powerActionStatus.state === "SCHEDULED"
-                  ? "关闭会取消自动电源倒数"
+                  ? "關閉會取消自動電源倒數"
                   : "今天的剪輯先保存到這裡嗎？"}
             </h2>
             <p>
               {renderInProgress
                 ? "目前仍在產出影片，Windows 防睡眠保護已開啟。請等待完成，或先回到轉檔頁取消並等候不完整檔清理完畢。"
                 : powerActionStatus.state === "SCHEDULED"
-                  ? `目前仍有 ${powerActionStatus.secondsRemaining ?? 0} 秒电源动作倒数。若确认关闭 App，会明确取消这次倒数，不会静默消失。`
+                  ? `目前仍有 ${powerActionStatus.secondsRemaining ?? 0} 秒電源動作倒數。若確認關閉 App，會明確取消這次倒數，不會靜默消失。`
                   : "專案會保留目前設定，來源影片與照片不會被修改。真的要關閉 SceneryWalker 嗎？"}
             </p>
             <div>

@@ -94,20 +94,20 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > MAX_BODY_BYTES) throw new Error("请求内容过大。");
+    if (size > MAX_BODY_BYTES) throw new Error("請求內容過大。");
     chunks.push(buffer);
   }
   if (!chunks.length) return {};
   const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("请求格式无效。");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("請求格式無效。");
   return parsed as Record<string, unknown>;
 }
 
-const REMOTE_HTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>SceneryWalker 遠端控制</title><link rel="stylesheet" href="/styles.css"></head><body><main><header><p>SceneryWalker</p><h1>iPhone 遠端控制</h1><span id="connection">正在配對…</span></header><section class="card"><h2 id="project">—</h2><div class="progress"><i id="bar"></i></div><strong id="percent">0%</strong><div class="times"><span>已耗時<b id="elapsed">—</b></span><span>目前階段預估剩餘<b id="eta">—</b></span></div><p id="segment">尚未開始</p></section><section class="grid" id="metrics"></section><section class="error" id="error" hidden></section><section class="actions"><button class="start" data-command="start">開始轉檔</button><button class="pause" data-command="pause">安全暫停</button><button class="resume" data-command="resume">繼續</button><button class="cancel" data-command="cancel">取消</button></section><p class="note" id="pauseDetail">暂停会先完成当前 FFmpeg 分段，不会强制中止编码器。</p></main><dialog id="cancelDialog"><h2>确定取消转档？</h2><p>目前分段会依既有安全流程结束或保存 checkpoint。</p><div><button id="keep">继续转档</button><button id="confirmCancel" class="cancel">确定取消</button></div></dialog><script src="/app.js"></script></body></html>`;
+const REMOTE_HTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>SceneryWalker 遠端控制</title><link rel="stylesheet" href="/styles.css"></head><body><main><header><p>SceneryWalker</p><h1>iPhone 遠端控制</h1><span id="connection">正在配對…</span></header><section class="card"><h2 id="project">—</h2><div class="progress"><i id="bar"></i></div><strong id="percent">0%</strong><div class="times"><span>已耗時<b id="elapsed">—</b></span><span>目前階段預估剩餘<b id="eta">—</b></span></div><p id="segment">尚未開始</p></section><section class="grid" id="metrics"></section><section class="error" id="error" hidden></section><section class="actions"><button class="start" data-command="start">開始轉檔</button><button class="pause" data-command="pause">安全暫停</button><button class="resume" data-command="resume">繼續</button><button class="cancel" data-command="cancel">取消</button></section><p class="note" id="pauseDetail">暫停會先完成當前 FFmpeg 分段，不會強制中止編碼器。</p></main><dialog id="cancelDialog"><h2>確定取消轉檔？</h2><p>目前分段會依既有安全流程結束或保存 checkpoint。</p><div><button id="keep">繼續轉檔</button><button id="confirmCancel" class="cancel">確定取消</button></div></dialog><script src="/app.js"></script></body></html>`;
 
 const REMOTE_CSS = `:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#08131c;color:#edf7ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(160deg,#08131c,#15102a);padding:max(18px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom))}main{max-width:560px;margin:auto}header p{color:#84ccff;margin:0;font-weight:800}h1{font-size:1.65rem;margin:.2rem 0}.card,.grid>div,.error{background:#111e2a;border:1px solid #29445d;border-radius:18px;padding:16px;margin-top:14px}.card h2{margin:0 0 12px}.progress{height:14px;border-radius:20px;background:#253341;overflow:hidden}.progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,#318aff,#9b6dff,#ff70b8)}#percent{font-size:1.8rem}.times{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.times span,.grid span{display:flex;flex-direction:column;color:#a9bfd0}.times b,.grid b{color:#fff;font-size:1.1rem}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid>div{margin:0;min-width:0}.error{border-color:#f66;color:#ffd8d8}.actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}button{min-height:58px;border:0;border-radius:16px;color:#fff;font-weight:800;font-size:1.08rem}.start{background:#1979e8}.pause{background:#8a57d8}.resume{background:#297f68}.cancel{background:#bb3448}button:disabled{opacity:.35}.note{color:#adc0d0;font-size:.9rem}dialog{background:#15222e;color:#fff;border:1px solid #4b6072;border-radius:20px;max-width:calc(100% - 32px)}dialog div{display:flex;gap:12px}dialog button{padding:0 18px;background:#44515e}@media(max-width:390px){.grid{grid-template-columns:1fr}.times{grid-template-columns:1fr}.actions{grid-template-columns:1fr}}`;
 
-const REMOTE_JS = `(()=>{const $=id=>document.getElementById(id);let csrf=sessionStorage.getItem('scenery-csrf'),cancelNonce;const clock=ms=>{if(ms==null)return'—';const s=Math.max(0,Math.floor(ms/1000));return[String(Math.floor(s/3600)).padStart(2,'0'),String(Math.floor(s%3600/60)).padStart(2,'0'),String(s%60).padStart(2,'0')].join(':')};const bytes=n=>n==null?'—':(n/1073741824).toFixed(1)+' GB';async function pair(){const pairToken=location.hash.startsWith('#pair=')?decodeURIComponent(location.hash.slice(6)):'';history.replaceState(null,'',location.pathname);if(!pairToken)throw Error('配对连结已失效，请在 Windows 端重新产生 QR Code。');const r=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:pairToken})});const j=await r.json();if(!r.ok)throw Error(j.error||'配对失败');csrf=j.csrfToken;sessionStorage.setItem('scenery-csrf',csrf)}async function api(path,options={}){const r=await fetch(path,{...options,headers:{...(options.headers||{}),'X-Scenery-CSRF':csrf,'Content-Type':'application/json'}});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||'操作失败');return j}function render(s){$('connection').textContent='已安全连接 · '+s.state;$('project').textContent=s.projectName||'未命名专案';$('bar').style.width=Math.max(0,Math.min(100,s.progressPercent||0))+'%';$('percent').textContent=Math.round(s.progressPercent||0)+'%';$('elapsed').textContent=clock(s.attemptElapsedMs);$('eta').textContent=clock(s.estimatedRemainingMs);$('segment').textContent=s.currentSegment||'尚未开始';$('pauseDetail').textContent=s.pauseDetail||'暂停会先完成当前 FFmpeg 分段，不会强制中止编码器。';const rows=[['Encoder',s.encoder],['Resolution',s.resolution],['Render Mode',s.renderMode],['Audio Mode',s.audioMode],['CPU',s.cpuUsagePercent==null?'—':Math.round(s.cpuUsagePercent)+'%'],['GPU Encode',s.gpuEncodeUsagePercent==null?'—':Math.round(s.gpuEncodeUsagePercent)+'%'],['RAM Used',bytes(s.ramUsedBytes)],['SSD Free',bytes(s.ssdFreeBytes)]];$('metrics').innerHTML=rows.map(r=>'<div><span>'+r[0]+'<b>'+String(r[1]??'—').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'</b></span></div>').join('');$('error').hidden=!s.latestError;$('error').textContent=s.latestError||'';document.querySelector('[data-command=start]').disabled=!s.prepared||['RUNNING','PAUSING','PAUSED'].includes(s.state);document.querySelector('[data-command=pause]').disabled=s.state!=='RUNNING';document.querySelector('[data-command=resume]').disabled=!['PAUSING','PAUSED','FAILED','CANCELLED'].includes(s.state);document.querySelector('[data-command=cancel]').disabled=!['RUNNING','PAUSING','PAUSED'].includes(s.state)}async function command(name,body={}){await api('/api/command/'+name,{method:'POST',body:JSON.stringify(body)});render((await api('/api/state')).render)}async function events(){const r=await fetch('/api/events',{headers:{'X-Scenery-CSRF':csrf}});if(!r.ok)throw Error('即时连线中断');const reader=r.body.getReader(),decoder=new TextDecoder();let buf='';for(;;){const v=await reader.read();if(v.done)throw Error('即时连线结束');buf+=decoder.decode(v.value,{stream:true});let i;while((i=buf.indexOf('\n\n'))>=0){const packet=buf.slice(0,i);buf=buf.slice(i+2);const data=packet.split('\n').find(x=>x.startsWith('data:'));if(data)render(JSON.parse(data.slice(5)))}}}document.querySelectorAll('[data-command]').forEach(b=>b.onclick=async()=>{const name=b.dataset.command;try{if(name==='cancel'){const intent=await api('/api/command/cancel-intent',{method:'POST',body:'{}'});cancelNonce=intent.cancelNonce;$('cancelDialog').showModal()}else await command(name)}catch(e){$('error').hidden=false;$('error').textContent=e.message}});$('keep').onclick=()=>{$('cancelDialog').close();cancelNonce=undefined};$('confirmCancel').onclick=()=>{ $('cancelDialog').close();command('cancel',{confirmation:'CANCEL',cancelNonce}).catch(e=>alert(e.message));cancelNonce=undefined};(async()=>{try{if(location.hash.startsWith('#pair=')||!csrf)await pair();render((await api('/api/state')).render);for(;;){try{await events()}catch(e){$('connection').textContent='连线中断，正在重连…';await new Promise(r=>setTimeout(r,2000))}}}catch(e){$('connection').textContent=e.message}})()})();`;
+const REMOTE_JS = `(()=>{const $=id=>document.getElementById(id);let csrf=sessionStorage.getItem('scenery-csrf'),cancelNonce;const clock=ms=>{if(ms==null)return'—';const s=Math.max(0,Math.floor(ms/1000));return[String(Math.floor(s/3600)).padStart(2,'0'),String(Math.floor(s%3600/60)).padStart(2,'0'),String(s%60).padStart(2,'0')].join(':')};const bytes=n=>n==null?'—':(n/1073741824).toFixed(1)+' GB';async function pair(){const pairToken=location.hash.startsWith('#pair=')?decodeURIComponent(location.hash.slice(6)):'';history.replaceState(null,'',location.pathname);if(!pairToken)throw Error('配對連結已失效，請在 Windows 端重新產生 QR Code。');const r=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:pairToken})});const j=await r.json();if(!r.ok)throw Error(j.error||'配對失敗');csrf=j.csrfToken;sessionStorage.setItem('scenery-csrf',csrf)}async function api(path,options={}){const r=await fetch(path,{...options,headers:{...(options.headers||{}),'X-Scenery-CSRF':csrf,'Content-Type':'application/json'}});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||'操作失敗');return j}function render(s){$('connection').textContent='已安全連接 · '+s.state;$('project').textContent=s.projectName||'未命名專案';$('bar').style.width=Math.max(0,Math.min(100,s.progressPercent||0))+'%';$('percent').textContent=Math.round(s.progressPercent||0)+'%';$('elapsed').textContent=clock(s.attemptElapsedMs);$('eta').textContent=clock(s.estimatedRemainingMs);$('segment').textContent=s.currentSegment||'尚未開始';$('pauseDetail').textContent=s.pauseDetail||'暫停會先完成當前 FFmpeg 分段，不會強制中止編碼器。';const rows=[['Encoder',s.encoder],['Resolution',s.resolution],['Render Mode',s.renderMode],['Audio Mode',s.audioMode],['CPU',s.cpuUsagePercent==null?'—':Math.round(s.cpuUsagePercent)+'%'],['GPU Encode',s.gpuEncodeUsagePercent==null?'—':Math.round(s.gpuEncodeUsagePercent)+'%'],['RAM Used',bytes(s.ramUsedBytes)],['SSD Free',bytes(s.ssdFreeBytes)]];$('metrics').innerHTML=rows.map(r=>'<div><span>'+r[0]+'<b>'+String(r[1]??'—').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'</b></span></div>').join('');$('error').hidden=!s.latestError;$('error').textContent=s.latestError||'';document.querySelector('[data-command=start]').disabled=!s.prepared||['RUNNING','PAUSING','PAUSED'].includes(s.state);document.querySelector('[data-command=pause]').disabled=s.state!=='RUNNING';document.querySelector('[data-command=resume]').disabled=!['PAUSING','PAUSED','FAILED','CANCELLED'].includes(s.state);document.querySelector('[data-command=cancel]').disabled=!['RUNNING','PAUSING','PAUSED'].includes(s.state)}async function command(name,body={}){await api('/api/command/'+name,{method:'POST',body:JSON.stringify(body)});render((await api('/api/state')).render)}async function events(){const r=await fetch('/api/events',{headers:{'X-Scenery-CSRF':csrf}});if(!r.ok)throw Error('即時連線中斷');const reader=r.body.getReader(),decoder=new TextDecoder();let buf='';for(;;){const v=await reader.read();if(v.done)throw Error('即時連線結束');buf+=decoder.decode(v.value,{stream:true});let i;while((i=buf.indexOf('\n\n'))>=0){const packet=buf.slice(0,i);buf=buf.slice(i+2);const data=packet.split('\n').find(x=>x.startsWith('data:'));if(data)render(JSON.parse(data.slice(5)))}}}document.querySelectorAll('[data-command]').forEach(b=>b.onclick=async()=>{const name=b.dataset.command;try{if(name==='cancel'){const intent=await api('/api/command/cancel-intent',{method:'POST',body:'{}'});cancelNonce=intent.cancelNonce;$('cancelDialog').showModal()}else await command(name)}catch(e){$('error').hidden=false;$('error').textContent=e.message}});$('keep').onclick=()=>{$('cancelDialog').close();cancelNonce=undefined};$('confirmCancel').onclick=()=>{ $('cancelDialog').close();command('cancel',{confirmation:'CANCEL',cancelNonce}).catch(e=>alert(e.message));cancelNonce=undefined};(async()=>{try{if(location.hash.startsWith('#pair=')||!csrf)await pair();render((await api('/api/state')).render);for(;;){try{await events()}catch(e){$('connection').textContent='連線中斷，正在重連…';await new Promise(r=>setTimeout(r,2000))}}}catch(e){$('connection').textContent=e.message}})()})();`;
 
 export class RemoteControlServer {
   private server?: Server;
@@ -181,7 +181,7 @@ export class RemoteControlServer {
   }
 
   async rotatePairing(): Promise<RemoteControlStatus> {
-    if (!this.server || !this.port) throw new Error("请先启动 iPhone 远端控制。");
+    if (!this.server || !this.port) throw new Error("請先啟動 iPhone 遠端控制。");
     const raw = token();
     this.rawPairingToken = raw;
     this.pairing = { tokenHash: hash(raw), expiresAt: Date.now() + PAIRING_TTL_MS, consumed: false };
@@ -278,11 +278,11 @@ export class RemoteControlServer {
         !this.allowedHost(request) ||
         !this.allowedOrigin(request)
       ) {
-        json(response, 403, { error: "只允许同一局域网的安全连接。" });
+        json(response, 403, { error: "只允許同一區域網路的安全連線。" });
         return;
       }
       if (!this.rateAllowed(request)) {
-        json(response, 429, { error: "请求过于频繁，请稍后再试。" });
+        json(response, 429, { error: "請求過於頻繁，請稍後再試。" });
         return;
       }
       const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
@@ -294,7 +294,7 @@ export class RemoteControlServer {
         return text(response, 200, "text/javascript; charset=utf-8", REMOTE_JS);
       if (request.method === "POST" && url.pathname === "/api/pair") {
         if (!this.pairingAllowed(request)) {
-          json(response, 429, { error: "配对失败次数过多，请在 Windows 端重新产生 QR Code 后稍候再试。" });
+          json(response, 429, { error: "配對失敗次數過多，請在 Windows 端重新產生 QR Code 後稍候再試。" });
           return;
         }
         const body = await readJsonBody(request);
@@ -305,7 +305,7 @@ export class RemoteControlServer {
           this.pairing.expiresAt <= Date.now() ||
           hash(raw) !== this.pairing.tokenHash
         ) {
-          json(response, 401, { error: "一次性配对连结无效或已使用，请在 Windows 端重新产生。" });
+          json(response, 401, { error: "一次性配對連結無效或已使用，請在 Windows 端重新產生。" });
           return;
         }
         this.pairing.consumed = true;
@@ -329,7 +329,7 @@ export class RemoteControlServer {
       }
       const authenticatedSession = this.authenticate(request);
       if (!authenticatedSession) {
-        json(response, 401, { error: "远端控制授权已失效，请重新扫描 QR Code。" });
+        json(response, 401, { error: "遠端控制授權已失效，請重新掃描 QR Code。" });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/state") {
@@ -359,7 +359,7 @@ export class RemoteControlServer {
       if (request.method === "POST" && url.pathname === "/api/command/cancel-intent") {
         await readJsonBody(request);
         if (!["RUNNING", "PAUSING", "PAUSED"].includes(this.renderState.snapshot().state)) {
-          json(response, 409, { error: "目前没有可取消的转档工作。" });
+          json(response, 409, { error: "目前沒有可取消的轉檔工作。" });
           return;
         }
         const cancelNonce = token(24);
@@ -386,7 +386,7 @@ export class RemoteControlServer {
             authenticatedSession.cancelJobGeneration !== this.renderState.currentJobGeneration() ||
             !["RUNNING", "PAUSING", "PAUSED"].includes(this.renderState.snapshot().state))
         ) {
-          json(response, 409, { error: "取消转档需要第二次确认。" });
+          json(response, 409, { error: "取消轉檔需要第二次確認。" });
           return;
         }
         if (command === "cancel") {
@@ -401,7 +401,7 @@ export class RemoteControlServer {
         json(response, 202, { accepted: true, render: this.renderState.snapshot() });
         return;
       }
-      json(response, 404, { error: "找不到此远端控制功能。" });
+      json(response, 404, { error: "找不到此遠端控制功能。" });
     } catch (error) {
       json(response, 400, { error: error instanceof Error ? error.message : String(error) });
     }

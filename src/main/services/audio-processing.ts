@@ -1,9 +1,4 @@
-import type {
-  AudioMeterReading,
-  AudioProcessingOptions,
-  BasicMediaInfo,
-  SurroundAudioCodec,
-} from "../../shared/domain";
+import type { AudioMeterReading, AudioProcessingOptions, SurroundAudioCodec } from "../../shared/domain";
 import { DEFAULT_AUDIO_PROCESSING_OPTIONS } from "../../shared/domain";
 
 const AUDIO_CODECS = new Set<SurroundAudioCodec>(["AAC", "AC3", "EAC3"]);
@@ -138,10 +133,6 @@ export function buildAudioRemuxArguments(
     channels: plan.channels,
     layout: plan.layout,
   };
-}
-
-export function canPreserveNativeMultichannel(info: BasicMediaInfo | undefined): boolean {
-  return Boolean((info?.audioChannels ?? 0) > 2 && info?.audioChannelLayout);
 }
 
 export function parseEbur128Summary(stderr: string): AudioMeterReading {
