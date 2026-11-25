@@ -185,7 +185,7 @@ export async function validateRenderTemporaryFolder(targetPath: string): Promise
   capacityBytes: number;
 }> {
   if (typeof targetPath !== "string" || !path.isAbsolute(targetPath))
-    throw new Error("Render Temporary Folder 必须是绝对路径。");
+    throw new Error("Render Temporary Folder 必須是絕對路徑。");
   const resolved = path.resolve(targetPath);
   await mkdir(resolved, { recursive: true });
   const marker = path.join(resolved, `.scenerywalker-write-test-${randomUUID()}.tmp`);

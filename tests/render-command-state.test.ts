@@ -38,7 +38,7 @@ describe("RenderCommandState", () => {
       purpose: "CONCAT" as const,
     }));
     state.setHandlers({ startPrepared: start, resumeCheckpoint: start, cancel: async () => undefined });
-    await expect(state.startPrepared()).rejects.toThrow("尚未准备");
+    await expect(state.startPrepared()).rejects.toThrow("尚未準備");
     state.prepare(request, "C:\\private\\output.mp4");
     expect(JSON.stringify(state.snapshot())).not.toContain("private");
     await state.startPrepared();
@@ -92,7 +92,7 @@ describe("RenderCommandState", () => {
       const state = new RenderCommandState("Project");
       state.markStarting(request);
       state.requestPause();
-      const waiting = state.waitAtSafeBoundary(undefined, "segment-001 已完成并写入 checkpoint");
+      const waiting = state.waitAtSafeBoundary(undefined, "segment-001 已完成並寫入 checkpoint");
       await vi.waitFor(() => expect(state.snapshot().state).toBe("PAUSED"));
 
       const restored = await new RenderCheckpointStore(path.join(root, "state")).load(projectId);

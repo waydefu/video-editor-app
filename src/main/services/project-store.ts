@@ -4,7 +4,6 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DEFAULT_BGM_VOLUME_PERCENT,
-  DEFAULT_AUDIO_TRACK_GATES,
   DEFAULT_IMAGE_DURATION_MS,
   DEFAULT_INTRO_SEGMENT_MAX_DURATION_MS,
   DEFAULT_INTRO_TARGET_DURATION_MS,
@@ -18,9 +17,7 @@ import {
   INTRO_EDIT_MIN_SEGMENT_MS,
   INTRO_MIN_SEGMENT_MS,
   MANIFEST_SCHEMA_VERSION,
-  MAX_IMAGE_DURATION_MS,
   MAX_MIX_VOLUME_PERCENT,
-  MIN_IMAGE_DURATION_MS,
   PREVIEWER_VERSION,
   type AiPublishAssets,
   type AiStoryContext,
@@ -1127,18 +1124,18 @@ export class ProjectStore {
         const index = project.mediaInsertions.findIndex((item) => item.id === instanceId);
         if (index < 0) throw new Error("找不到正片安插素材。");
         const asset = project.sources.find((item) => item.id === project.mediaInsertions[index].insertedAssetId);
-        if (!asset) throw new Error("找不到正片安插素材来源。");
+        if (!asset) throw new Error("找不到正片安插素材來源。");
         project.mediaInsertions[index] = {
           ...project.mediaInsertions[index],
           insertionAudio: normalizeInsertionAudioSettings(settings, asset.kind, validTrackIds),
         };
         return;
       }
-      if (scope !== "INTRO") throw new Error("安插素材音讯范围无效。");
+      if (scope !== "INTRO") throw new Error("安插素材音訊範圍無效。");
       const index = project.introSegments.findIndex((item) => item.id === instanceId);
-      if (index < 0) throw new Error("找不到片头素材。");
+      if (index < 0) throw new Error("找不到片頭素材。");
       const asset = project.sources.find((item) => item.id === project.introSegments[index].assetId);
-      if (!asset) throw new Error("找不到片头素材来源。");
+      if (!asset) throw new Error("找不到片頭素材來源。");
       project.introSegments[index] = {
         ...project.introSegments[index],
         insertionAudio: normalizeInsertionAudioSettings(settings, asset.kind, validTrackIds),

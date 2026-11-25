@@ -173,7 +173,7 @@ export function PlaylistModal({ assets, clips, project, onClose, onAssetUpdated 
           </div>
           <div className="playlist-header-actions">
             <span>{progress}</span>
-            <button className="icon-button" type="button" onClick={onClose}>
+            <button className="icon-button" type="button" onClick={onClose} aria-label="關閉">
               ×
             </button>
           </div>

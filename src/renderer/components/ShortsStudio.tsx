@@ -250,10 +250,10 @@ export function ShortsStudio({ project, onClose }: Props) {
                         {formatDuration(segment.outMs)}
                       </span>
                     </div>
-                    <button onClick={() => move(index, -1)} disabled={index === 0}>
+                    <button aria-label="上移" onClick={() => move(index, -1)} disabled={index === 0}>
                       ↑
                     </button>
-                    <button onClick={() => move(index, 1)} disabled={index === segments.length - 1}>
+                    <button aria-label="下移" onClick={() => move(index, 1)} disabled={index === segments.length - 1}>
                       ↓
                     </button>
                     <button

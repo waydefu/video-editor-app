@@ -194,7 +194,7 @@ export function AudioProcessingSettings({
         <span className="setting-step">{stepLabel}</span>
         <div>
           <h3>Audio Processing 音訊處理</h3>
-          <p>复用 Proxy Video，并仅处理当前位置前后约 20 秒音讯；正式输出仍重读高品质来源。</p>
+          <p>複用 Proxy Video，並僅處理當前位置前後約 20 秒音訊；正式輸出仍重讀高品質來源。</p>
         </div>
       </div>
       <fieldset disabled={disabled || busy} className="audio-mode-options">
@@ -235,7 +235,7 @@ export function AudioProcessingSettings({
               disabled={disabled}
               onChange={(event) => update({ preset: event.target.value as AudioProcessingOptions["preset"] })}
             >
-              <option value="NATURAL">Natural（预设）</option>
+              <option value="NATURAL">Natural（預設）</option>
               <option value="CINEMA">Cinema</option>
               <option value="WIDE">Wide</option>
             </select>
@@ -254,7 +254,7 @@ export function AudioProcessingSettings({
             <output>{value.stereoWidthPercent ?? 100}%</output>
           </label>
           <label>
-            低频 EQ
+            低頻 EQ
             <input
               type="range"
               min={-6}
@@ -267,7 +267,7 @@ export function AudioProcessingSettings({
             <output>{value.eqLowDb ?? 0} dB</output>
           </label>
           <label>
-            人声清晰度 EQ
+            人聲清晰度 EQ
             <input
               type="range"
               min={-6}
@@ -293,7 +293,7 @@ export function AudioProcessingSettings({
                     })
                   }
                 >
-                  <option value="AAC">AAC 5.1（YouTube 建议）</option>
+                  <option value="AAC">AAC 5.1（YouTube 建議）</option>
                   <option value="AC3">AC-3 5.1</option>
                   <option value="EAC3">E-AC-3 5.1</option>
                 </select>
@@ -355,7 +355,7 @@ export function AudioProcessingSettings({
       )}
       <div className="audio-preview-actions">
         <label>
-          试听素材
+          試聽素材
           <select
             value={previewAsset?.id ?? ""}
             disabled={disabled || busy || !previewableAssets.length}
@@ -368,7 +368,7 @@ export function AudioProcessingSettings({
               setAfter(undefined);
             }}
           >
-            <option value="">请选择</option>
+            <option value="">請選擇</option>
             {previewableAssets.map((asset) => (
               <option key={asset.id} value={asset.id}>
                 {asset.fileName}
@@ -382,12 +382,12 @@ export function AudioProcessingSettings({
           disabled={disabled || busy || !previewAsset}
           onClick={() => void createPreview()}
         >
-          {busy ? "正在快速建立试听区段…" : before ? "依目前播放位置重建 20 秒试听" : "启动 Proxy 即时音效试听"}
+          {busy ? "正在快速建立試聽區段…" : before ? "依目前播放位置重建 20 秒試聽" : "啟動 Proxy 即時音效試聽"}
         </button>
         <small>
           {previewAsset
-            ? `画面复用 ${previewAsset.fileName} 的 H.264 Proxy，不重新 Encode；参数改变后自动 debounce 重建。`
-            : "目前清单中没有已识别音轨的影片。"}
+            ? `畫面複用 ${previewAsset.fileName} 的 H.264 Proxy，不重新 Encode；參數改變後自動 debounce 重建。`
+            : "目前清單中沒有已識別音軌的影片。"}
         </small>
       </div>
       {error && <div className="notice error">{error}</div>}
@@ -429,7 +429,7 @@ export function AudioProcessingSettings({
               B · {value.mode === "VIRTUAL_SURROUND_5_1" ? "Virtual 5.1→Stereo" : "Enhanced"}
             </button>
           </div>
-          <small>A/B 切换保留 Proxy 播放头；移动超出快取区段后，请按上方按钮重建。</small>
+          <small>A/B 切換保留 Proxy 播放頭；移動超出快取區段後，請按上方按鈕重建。</small>
         </div>
       )}
       {(before || after) && (

@@ -267,7 +267,7 @@ export function MainStartCardModal({
                 />
                 秒
               </label>
-              <small>这是正片 SFX，不归类为片头。以合成双音提示，不使用品牌音效或外部授权素材。</small>
+              <small>這是正片 SFX，不歸類為片頭。以合成雙音提示，不使用品牌音效或外部授權素材。</small>
               <button type="button" className="secondary-button" disabled={!cueDraft.enabled} onClick={previewCue}>
                 ▶ 試聽 SFX
               </button>

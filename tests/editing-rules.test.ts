@@ -41,7 +41,7 @@ describe("editing validation rules", () => {
     ).toEqual([0, 100, 200, 300]);
   });
   it("validates BGM source/timeline spans and fades", () => {
-    expect(() => validateBgmTrack({ ...bgm, timelineOutMs: 4_000 })).toThrow(/长度必须|長度必須/);
+    expect(() => validateBgmTrack({ ...bgm, timelineOutMs: 4_000 })).toThrow(/長度必須|長度必須/);
     expect(() => validateBgmTrack({ ...bgm, fadeInMs: 3_000, fadeOutMs: 3_000 })).toThrow(/淡入/);
   });
   it("sorts subtitle cues and rejects overlap or empty text", () => {

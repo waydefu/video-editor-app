@@ -15,7 +15,7 @@ export const DEFAULT_INSERTION_SFX_VOLUME_PERCENT = 70 as const;
 export const DEFAULT_INSERTION_AUDIO_FADE_MS = 180 as const;
 export const DEFAULT_INSERTION_BGM_LOOP_CROSSFADE_MS = 120 as const;
 export const MAIN_START_CUE_SFX_ID = "SCENERYWALKER_MAIN_START_CHIME_V1" as const;
-export const DEFAULT_MAIN_START_CUE_DURATION_MS = 650 as const;
+const DEFAULT_MAIN_START_CUE_DURATION_MS = 650 as const;
 export const MAX_MIX_VOLUME_PERCENT = 300 as const;
 export const DEFAULT_INTRO_TARGET_DURATION_MS = 90_000 as const;
 export const DEFAULT_INTRO_SEGMENT_MAX_DURATION_MS = 15_000 as const;
@@ -30,7 +30,7 @@ export const DEFAULT_ZOOM_PERCENT = 100 as const;
 export const MIN_ZOOM_PERCENT = 100 as const;
 export const MAX_ZOOM_PERCENT = 400 as const;
 export const DEFAULT_ZOOM_ENHANCEMENT_PRESET = "BALANCED" as const;
-export const DEFAULT_MAIN_START_CARD_DURATION_SEC = 3 as const;
+const DEFAULT_MAIN_START_CARD_DURATION_SEC = 3 as const;
 
 export type SourceKind = "VIDEO" | "IMAGE";
 export type SourcePolicy = "READ_ONLY";

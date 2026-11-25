@@ -15,7 +15,16 @@ const asset = {
 describe("workspace components", () => {
   it("exposes one material editor with section tabs and initial selection", () => {
     const open = vi.fn();
-    render(<MaterialEditorModal asset={asset} initialSection="VOLUME" onClose={vi.fn()} onOpenSection={open} />);
+    render(
+      <MaterialEditorModal
+        asset={asset}
+        assets={[asset]}
+        initialSection="VOLUME"
+        onClose={vi.fn()}
+        onSelectAsset={vi.fn()}
+        onOpenSection={open}
+      />,
+    );
     expect(screen.getByRole("dialog", { name: /素材編輯工作區/ })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "音量區段" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "安插素材" }));

@@ -1,4 +1,4 @@
-import type { BgmTrack, ProjectManifest, RenderClipSelection, SubtitleCue, SubtitleTimelineScope } from "./domain";
+import type { ProjectManifest, RenderClipSelection } from "./domain";
 import { mainRenderSelections } from "./editing-rules";
 
 /** Canonical, deterministic output timeline used by estimates, subtitles and BGM mapping. */
@@ -93,35 +93,4 @@ export function buildMainTimelineGroups(
     current.clipCount += 1;
   }
   return groups;
-}
-
-export function mapTimelineCueToPlan(cue: SubtitleCue, plan: TimelinePlan): SubtitleCue | undefined {
-  const scope: SubtitleTimelineScope = cue.timelineScope ?? "MAIN";
-  const scoped = plan.clips.filter((item) => item.scope === scope);
-  if (!scoped.length) return undefined;
-  // Subtitle cue times are relative to their own Main/Intro timeline, while a
-  // combined plan may place Intro before Main. Convert to a scope-local origin.
-  const scopeOrigin = scoped[0].outputStartMs;
-  const clip = scoped.find(
-    (item) => cue.startMs >= item.outputStartMs - scopeOrigin && cue.startMs < item.outputEndMs - scopeOrigin,
-  );
-  if (!clip) return undefined;
-  const offset = cue.startMs - (clip.outputStartMs - scopeOrigin);
-  const duration = Math.max(1, cue.endMs - cue.startMs);
-  return {
-    ...cue,
-    startMs: clip.outputStartMs + offset,
-    endMs: Math.min(plan.durationMs, clip.outputStartMs + offset + duration),
-  };
-}
-
-export function bgmTracksForPlan(tracks: BgmTrack[], plan: TimelinePlan): BgmTrack[] {
-  return tracks
-    .filter((track) => track.resolutionStatus !== "NEEDS_LOCAL_FILE")
-    .map((track) => ({
-      ...track,
-      timelineInMs: Math.max(0, Math.min(plan.durationMs, track.timelineInMs)),
-      timelineOutMs: Math.max(0, Math.min(plan.durationMs, track.timelineOutMs)),
-    }))
-    .filter((track) => track.timelineOutMs > track.timelineInMs);
 }

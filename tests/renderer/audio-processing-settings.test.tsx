@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AudioProcessingSettings } from "../../src/renderer/components/AudioProcessingSettings";
@@ -19,7 +19,6 @@ const asset = {
 } as unknown as SourceAsset;
 
 function Harness({
-  api,
   initial = DEFAULT_AUDIO_PROCESSING_OPTIONS,
 }: {
   api: Record<string, unknown>;
@@ -58,12 +57,12 @@ describe("AudioProcessingSettings live preview", () => {
     };
     Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
     render(<Harness api={api} initial={{ ...DEFAULT_AUDIO_PROCESSING_OPTIONS, mode: "ENHANCED_STEREO" }} />);
-    fireEvent.click(screen.getByRole("button", { name: "启动 Proxy 即时音效试听" }));
+    fireEvent.click(screen.getByRole("button", { name: "啟動 Proxy 即時音效試聽" }));
     await waitFor(() => expect(document.querySelector("video")).toBeInTheDocument());
     const video = document.querySelector("video")!;
     Object.defineProperty(video, "currentTime", { configurable: true, writable: true, value: 12.4 });
     await waitFor(() => expect(api.createAudioPreview).toHaveBeenCalledTimes(2));
-    fireEvent.click(screen.getByRole("button", { name: "依目前播放位置重建 20 秒试听" }));
+    fireEvent.click(screen.getByRole("button", { name: "依目前播放位置重建 20 秒試聽" }));
     await waitFor(() => expect(api.createAudioPreview).toHaveBeenCalledTimes(4));
     expect(api.ensurePreview).toHaveBeenCalledOnce();
     expect(api.createAudioPreview).toHaveBeenNthCalledWith(
@@ -92,7 +91,7 @@ describe("AudioProcessingSettings live preview", () => {
     };
     Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
     render(<Harness api={api} initial={{ ...DEFAULT_AUDIO_PROCESSING_OPTIONS, mode: "ENHANCED_STEREO" }} />);
-    fireEvent.click(screen.getByRole("button", { name: "启动 Proxy 即时音效试听" }));
+    fireEvent.click(screen.getByRole("button", { name: "啟動 Proxy 即時音效試聽" }));
     await waitFor(() => expect(document.querySelector("video")).toBeInTheDocument());
     const video = document.querySelector("video")!;
     Object.defineProperty(video, "currentTime", { configurable: true, writable: true, value: 12 });
@@ -112,7 +111,7 @@ describe("AudioProcessingSettings live preview", () => {
     };
     Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
     render(<Harness api={api} initial={{ ...DEFAULT_AUDIO_PROCESSING_OPTIONS, mode: "ENHANCED_STEREO" }} />);
-    fireEvent.click(screen.getByRole("button", { name: "启动 Proxy 即时音效试听" }));
+    fireEvent.click(screen.getByRole("button", { name: "啟動 Proxy 即時音效試聽" }));
     await waitFor(() => expect(api.createAudioPreview).toHaveBeenCalledTimes(2));
     const width = screen.getByRole("slider", { name: /Stereo Width/ });
     fireEvent.change(width, { target: { value: "125" } });

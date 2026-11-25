@@ -428,7 +428,7 @@ function mockApi(initialProject: ProjectManifest = project): AppApi {
       displayPath: "C:\\Output\\auto-preview.mp4",
       automatic: true,
     })),
-    estimateConcatRender: vi.fn(async (request) => ({
+    estimateConcatRender: vi.fn(async () => ({
       outputPath: "C:\\Output\\preview.mp4",
       driveRoot: "C:\\",
       currentFreeBytes: 20 * 1024 ** 3,

@@ -18,7 +18,7 @@ export interface RenderCommandHandlers {
 }
 
 function redactLocalPaths(message: string): string {
-  return message.replace(/[A-Za-z]:\\[^\r\n"']+/g, "[本机路径已隐藏]");
+  return message.replace(/[A-Za-z]:\\[^\r\n"']+/g, "[本機路徑已隱藏]");
 }
 
 /**
@@ -202,13 +202,13 @@ export class RenderCommandState {
 
   async startPrepared(): Promise<void> {
     if (!this.handlers) throw new Error("遠端命令尚未就緒。");
-    if (!this.prepared) throw new Error("Windows 端尚未准备可供远端启动的转档工作。");
+    if (!this.prepared) throw new Error("Windows 端尚未準備可供遠端啟動的轉檔工作。");
     if (
       this.snapshotValue.state === "RUNNING" ||
       this.snapshotValue.state === "PAUSING" ||
       this.snapshotValue.state === "PAUSED"
     )
-      throw new Error("目前已有转档工作执行中。");
+      throw new Error("目前已有轉檔工作執行中。");
     if (this.launchPending) throw new Error("轉檔正在預檢，請稍候。");
     const request = structuredClone(this.prepared.request);
     this.prepared = undefined;
@@ -221,7 +221,7 @@ export class RenderCommandState {
       this.resumeFromPause();
       return;
     }
-    if (this.snapshotValue.state === "RUNNING") throw new Error("目前转档没有暂停。");
+    if (this.snapshotValue.state === "RUNNING") throw new Error("目前轉檔沒有暫停。");
     this.launch(() => this.handlers!.resumeCheckpoint());
   }
 
@@ -241,12 +241,12 @@ export class RenderCommandState {
   }
 
   requestPause(): void {
-    if (this.snapshotValue.state !== "RUNNING") throw new Error("目前没有可暂停的转档工作。");
+    if (this.snapshotValue.state !== "RUNNING") throw new Error("目前沒有可暫停的轉檔工作。");
     this.pauseRequested = true;
-    this.patch({ state: "PAUSING", pauseDetail: "等待目前 FFmpeg 分段完成后暂停，不会强制挂起或终止编码器。" });
+    this.patch({ state: "PAUSING", pauseDetail: "等待目前 FFmpeg 分段完成後暫停，不會強制掛起或終止編碼器。" });
   }
 
-  async waitAtSafeBoundary(signal?: AbortSignal, detail = "已在安全分段边界暂停"): Promise<void> {
+  async waitAtSafeBoundary(signal?: AbortSignal, detail = "已在安全分段邊界暫停"): Promise<void> {
     if (!this.pauseRequested) return;
     signal?.throwIfAborted();
     await new Promise<void>((resolve, reject) => {
@@ -267,7 +267,7 @@ export class RenderCommandState {
 
   resumeFromPause(): void {
     if (!this.pauseRequested && this.snapshotValue.state !== "PAUSED" && this.snapshotValue.state !== "PAUSING")
-      throw new Error("目前转档没有暂停。");
+      throw new Error("目前轉檔沒有暫停。");
     this.pauseRequested = false;
     this.patch({ state: "RUNNING", pauseDetail: undefined });
     this.releasePauseWaiters();

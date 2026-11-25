@@ -484,7 +484,7 @@ export function registerIpc(
     };
   };
   let lastActiveProjectId = store.getProject().id;
-  const unsubscribeProjectChanges = store.subscribe((change) => {
+  store.subscribe((change) => {
     if (change.projectId !== lastActiveProjectId) {
       lastActiveProjectId = change.projectId;
       outputTokens.clear();
@@ -643,11 +643,11 @@ export function registerIpc(
     return userPreferences.update(update);
   });
   ipcMain.handle("render-temp:choose", async (event) => {
-    if (concatController || renderAdmission.busy) throw new Error("转档进行中，暂时不能切换 Render Temporary Folder。");
+    if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，暫時不能切換 Render Temporary Folder。");
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const current = userPreferences.snapshot().renderDefaults.renderTemporaryFolder ?? app.getPath("temp");
     const options: Electron.OpenDialogOptions = {
-      title: "选择 Render Temporary Folder",
+      title: "選擇 Render Temporary Folder",
       defaultPath: current,
       properties: ["openDirectory", "createDirectory"],
     };
@@ -663,7 +663,7 @@ export function registerIpc(
     return validated;
   });
   ipcMain.handle("render-temp:validate", async (_event, targetPath: string) => {
-    if (concatController || renderAdmission.busy) throw new Error("转档进行中，暂时不能切换 Render Temporary Folder。");
+    if (concatController || renderAdmission.busy) throw new Error("轉檔進行中，暫時不能切換 Render Temporary Folder。");
     return validateRenderTemporaryFolder(targetPath);
   });
   ipcMain.handle("render-temp:list", async (): Promise<RenderTempLocationStatus[]> => {
@@ -1064,14 +1064,14 @@ export function registerIpc(
     request.estimatedPeakDiskBytes =
       selectedMode.diskBreakdown?.peakWorkingBytes ?? selectedMode.estimatedTemporaryBytes;
     request.estimatedFinalOutputBytes = selectedMode.estimatedOutputBytes;
-    postSuccessPower.cancel("侦测到新的转档工作；已取消先前排定的电源动作。");
+    postSuccessPower.cancel("偵測到新的轉檔工作；已取消先前排定的電源動作。");
     const releasePowerGuard = renderPowerGuard.acquire();
     const controller = new AbortController();
     concatController = controller;
     const backgroundJobId = beginBackgroundJob("CONCAT_RENDER", "片頭／正片預覽產出");
-    renderCommands.markStarting(request);
     let successfulResult: import("../shared/domain").ConcatRenderResult | undefined;
     try {
+      renderCommands.markStarting(request);
       const result = await concatRenderer.render(request, selectedOutput.outputPath, controller.signal, (progress) => {
         updateBackgroundJob(backgroundJobId, {
           percent: progress.percent,
@@ -1115,15 +1115,15 @@ export function registerIpc(
   ipcMain.handle("concat:start", (_event, request: ConcatRenderRequest) => executeConcatStart(request));
   ipcMain.handle("remote-control:prepare-render", async (_event, request: ConcatRenderRequest) => {
     if (renderAdmission.busy || projectSwitchInProgress) throw new Error("目前不能準備遠端轉檔。");
-    if (!request || typeof request.outputToken !== "string") throw new Error("远端准备转档的要求格式无效。");
+    if (!request || typeof request.outputToken !== "string") throw new Error("遠端準備轉檔的要求格式無效。");
     const selectedOutput = outputTokens.get(request.outputToken);
     if (
       !selectedOutput ||
       selectedOutput.projectId !== store.getProject().id ||
       Date.now() - selectedOutput.createdAt > 30 * 60 * 1000
     )
-      throw new Error("请先在 Windows 端选择仍有效的输出位置。");
-    if (!RENDER_RESOLUTIONS.has(request.resolution)) throw new Error("转档解析度无效。");
+      throw new Error("請先在 Windows 端選擇仍有效的輸出位置。");
+    if (!RENDER_RESOLUTIONS.has(request.resolution)) throw new Error("轉檔解析度無效。");
     return renderCommands.prepare(request, selectedOutput.outputPath);
   });
   ipcMain.handle("remote-control:clear-prepared-render", () => renderCommands.clearPrepared());
@@ -1241,14 +1241,14 @@ export function registerIpc(
       );
     }
     const offer = await concatRenderer.getResumeOffer();
-    postSuccessPower.cancel("侦测到新的续转工作；已取消先前排定的电源动作。");
+    postSuccessPower.cancel("偵測到新的續轉工作；已取消先前排定的電源動作。");
     const releasePowerGuard = renderPowerGuard.acquire();
     const controller = new AbortController();
     concatController = controller;
     const backgroundJobId = beginBackgroundJob("CONCAT_RENDER", "從 checkpoint 續轉片頭／正片預覽");
-    renderCommands.markResuming(offer?.mode ?? "NORMAL");
     let successfulResult: import("../shared/domain").ConcatRenderResult | undefined;
     try {
+      renderCommands.markResuming(offer?.mode ?? "NORMAL");
       const result = await concatRenderer.resume(
         checkpointId,
         controller.signal,
@@ -2933,7 +2933,7 @@ export function registerIpc(
     const output = request && typeof request.jobId === "string" ? await outputHistory.get(request.jobId) : undefined;
     if (!output || output.purpose === "CLIP")
       throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
-    postSuccessPower.cancel("侦测到新的 YouTube 上传；已取消先前排定的电源动作。");
+    postSuccessPower.cancel("偵測到新的 YouTube 上傳；已取消先前排定的電源動作。");
     const releasePowerGuard = renderPowerGuard.acquire();
     const controller = new AbortController();
     youtubeUploadController = controller;
@@ -2963,7 +2963,7 @@ export function registerIpc(
   });
   ipcMain.handle("youtube:cancel-upload", () => youtubeUploadController?.abort());
   ipcMain.handle("youtube:retry-thumbnail", async (_event, videoId: string, thumbnailPath: string) => {
-    postSuccessPower.cancel("侦测到缩图重试；已取消先前排定的电源动作。");
+    postSuccessPower.cancel("偵測到縮圖重試；已取消先前排定的電源動作。");
     const releasePowerGuard = renderPowerGuard.acquire();
     let succeeded = false;
     try {
