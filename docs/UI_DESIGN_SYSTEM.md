@@ -6,10 +6,10 @@
 
 ## 1. 字體
 
-- 中文：標楷體；英文與數字：Segoe UI 斜體。全部文字（含按鈕、輸入框、時間碼）都套用（負責人決定）。
-- 字體堆疊：`"Segoe UI", "DFKai-SB", "標楷體", "BiauKai", serif`。拉丁字母由 Segoe UI 顯示，中日韓字元與全形標點落到標楷體。
+- 中文：微軟正黑體；英文與數字：Segoe UI 斜體。全部文字（含按鈕、輸入框、時間碼）都套用（負責人決定；原本的標楷體已取消）。
+- 字體堆疊：`"Segoe UI", "Microsoft JhengHei UI", "Microsoft JhengHei", "微軟正黑體", sans-serif`。拉丁字母由 Segoe UI 顯示，中日韓字元與全形標點落到微軟正黑體。
 - `font-style: italic` 設在 `:root`，`input`、`textarea`、`select`、`button` 都 `font: inherit`。
-- `font-synthesis: weight`：允許標楷體合成粗體（標題才有層次），但禁止合成斜體，所以中文維持正體、只有英文數字是斜體。
+- `font-synthesis: weight`：只允許合成粗體，禁止合成斜體，所以中文維持正體、只有英文數字是斜體。
 
 ## 2. 字級（根字級 18px，可由「Aa 設定」整體縮放）
 
