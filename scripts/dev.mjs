@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const viteBin = require.resolve("vite/bin/vite.js");
+// Vite 8's "exports" no longer exposes bin/vite.js, so resolve it from package.json's bin field.
+const vitePackageJson = require.resolve("vite/package.json");
+const viteBin = join(dirname(vitePackageJson), require(vitePackageJson).bin.vite);
 const electron = require("electron");
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const devUrl = "http://127.0.0.1:5173";
@@ -48,6 +51,6 @@ electronProcess = spawn(electron, [appRoot], {
   cwd: appRoot,
   env: { ...process.env, VITE_DEV_SERVER_URL: devUrl },
   stdio: "inherit",
-  windowsHide: true,
+  // No windowsHide here: on Windows it hides the app's first window, not just a console.
 });
 electronProcess.once("exit", (code) => void stop(code ?? 0));
