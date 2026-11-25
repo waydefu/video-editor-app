@@ -324,7 +324,11 @@ export function BgmStudio({ project, timelineDurationMs, onProjectUpdated, onClo
                   AI 同時搜尋 TikTok／抖音近期熱門音樂
                 </label>
                 <div>
-                  <button className="primary-button" disabled={suggesting || busy} onClick={() => void suggestMusic()}>
+                  <button
+                    className="secondary-button"
+                    disabled={suggesting || busy}
+                    onClick={() => void suggestMusic()}
+                  >
                     {suggesting ? "搜尋中…" : "產生多個試聽建議"}
                   </button>
                   {suggesting && (
@@ -414,7 +418,7 @@ export function BgmStudio({ project, timelineDurationMs, onProjectUpdated, onClo
             <div>
               <h3>加入本機 MP3</h3>
               <p>可一次選擇多首；依選取順序接在目前配樂後方。來源唯讀。</p>
-              <button className="primary-button" disabled={busy} onClick={() => void add()}>
+              <button className="secondary-button" disabled={busy} onClick={() => void add()}>
                 ＋ 加入 MP3
               </button>
             </div>
@@ -511,7 +515,7 @@ export function BgmStudio({ project, timelineDurationMs, onProjectUpdated, onClo
                         我確認將指定的 MP3 是自有、已授權，或由 YouTube Audio Library 正式下載
                       </label>
                       <button
-                        className="primary-button"
+                        className="secondary-button"
                         disabled={busy || rightsConfirmed[track.id] !== true}
                         onClick={() => void resolve(track)}
                       >

@@ -79,6 +79,7 @@ export function YoutubeSettingsModal({ onClose, onSettingsChanged }: Props) {
   };
 
   const disconnect = async () => {
+    if (!window.confirm("要解除 YouTube 授權嗎？App 內保存的授權會被移除，之後要上傳須重新登入授權。")) return;
     setBusy(true);
     setError(undefined);
     try {
