@@ -1962,7 +1962,7 @@ export function ConcatRenderModal({
                         )}
                       {(window.sourceApp as V083StorageApi).scanAndRemapConcatRenderArtifacts && (
                         <button
-                          className="primary-button"
+                          className="secondary-button"
                           type="button"
                           disabled={storageActionBusy}
                           onClick={() => void scanManualMoveAndContinue()}
@@ -4011,7 +4011,7 @@ export function ConcatRenderModal({
                       {remotePreparedAt ? "已準備 iPhone 啟動" : "準備 iPhone 遠端啟動"}
                     </button>
                     <button
-                      className="primary-button"
+                      className={resumeOffer ? "secondary-button" : "primary-button"}
                       type="button"
                       aria-busy={estimateBusy}
                       disabled={

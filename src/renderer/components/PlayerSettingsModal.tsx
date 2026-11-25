@@ -66,6 +66,7 @@ export function PlayerSettingsModal({ onClose }: PlayerSettingsModalProps) {
   };
 
   const removeCustom = async (playerId: ExternalPlayerId) => {
+    if (!window.confirm("要移除這個自訂播放器嗎？只會移除設定，不會刪除程式本身；需要時可重新新增。")) return;
     setBusy(true);
     setError(undefined);
     try {

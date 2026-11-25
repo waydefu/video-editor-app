@@ -214,7 +214,12 @@ export function MaterialSubtitleAnalysisModal({
             )}
             {asset.kind === "IMAGE" && <small className="material-analysis-hint">{frameHint}</small>}
             <div className="material-analysis-actions">
-              <button className="primary-button" type="button" onClick={() => void analyze()} disabled={busy}>
+              <button
+                className={drafts.length > 0 ? "secondary-button" : "primary-button"}
+                type="button"
+                onClick={() => void analyze()}
+                disabled={busy}
+              >
                 {busy ? "分析中…" : "✦ 分析並產生字幕草稿"}
               </button>
               {busy && (

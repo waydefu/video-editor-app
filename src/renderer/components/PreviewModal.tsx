@@ -698,7 +698,7 @@ export function PreviewModal({
                 >
                   一鍵清除排除區段
                 </button>
-                <button className="primary-button" type="button" onClick={() => void saveRanges()}>
+                <button className="secondary-button" type="button" onClick={() => void saveRanges()}>
                   保存排除區段
                 </button>
               </div>

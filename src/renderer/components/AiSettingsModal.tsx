@@ -248,6 +248,7 @@ export function AiSettingsModal({ project, onProjectUpdated, onClose }: Props) {
 
   const clearCredential = async () => {
     if (!selected) return;
+    if (!window.confirm("要清除這個帳號保存的 API Key 嗎？清除後無法復原，須重新輸入才能再使用。")) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -270,6 +271,7 @@ export function AiSettingsModal({ project, onProjectUpdated, onClose }: Props) {
 
   const remove = async () => {
     if (!selected || !snapshot || snapshot.accounts.length <= 1) return;
+    if (!window.confirm("要刪除這個 AI 帳號嗎？帳號設定與其加密憑證會一併移除，無法復原。")) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -340,6 +342,8 @@ export function AiSettingsModal({ project, onProjectUpdated, onClose }: Props) {
   };
 
   const clearGoogle = async () => {
+    if (!window.confirm("要清除 Google Cloud API Key 嗎？清除後無法復原，須重新輸入才能再使用 Google 翻譯備援。"))
+      return;
     setTranslationBusy(true);
     setError(undefined);
     try {

@@ -2854,7 +2854,7 @@ export function SubtitleStudio({ project, timelineDurationMs, onProjectUpdated, 
             </button>
             {savedDraftToken && (
               <button
-                className="primary-button"
+                className="secondary-button"
                 disabled={busy || generating || buildingPreview || counts.draft > 0}
                 onClick={() => void promoteSavedAiDraft()}
               >

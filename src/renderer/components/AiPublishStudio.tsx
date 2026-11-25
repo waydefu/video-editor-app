@@ -631,7 +631,7 @@ export function AiPublishStudio({ project, onProjectUpdated, onClose }: Props) {
         </div>
         <footer className="settings-footer">
           <p>縮圖會自動以片頭優先的可追溯影格合成；本版不捏造來源畫面，也不會改寫原始素材。</p>
-          <button className="primary-button" onClick={requestClose}>
+          <button className="secondary-button" onClick={requestClose}>
             完成
           </button>
         </footer>
