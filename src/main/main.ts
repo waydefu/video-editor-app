@@ -78,6 +78,19 @@ if (process.env.APP_TEST_USER_DATA_PATH) {
   app.setPath("userData", path.resolve(process.env.APP_TEST_USER_DATA_PATH));
 }
 
+// Two instances on one App Data folder overwrite each other's project and settings files (R1-15).
+// Electron scopes this lock to the userData path, so it must be requested after the override above:
+// isolated smoke and QA profiles then never contend with a real running instance.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.exit(0);
+app.on("second-instance", () => {
+  const existing = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+  if (!existing) return;
+  if (existing.isMinimized()) existing.restore();
+  existing.show();
+  existing.focus();
+});
+
 let mainWindow: BrowserWindow | undefined;
 let applicationQuitting = false;
 let remoteControlServer: RemoteControlServer | undefined;
@@ -337,6 +350,8 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(async () => {
+  // A losing second instance must never initialize stores on the shared App Data folder.
+  if (!hasSingleInstanceLock) return;
   // The UI is dark-only; this makes the native Windows title bar dark too.
   nativeTheme.themeSource = "dark";
   const updates = new PortableUpdateService(
