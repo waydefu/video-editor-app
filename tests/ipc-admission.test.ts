@@ -5,21 +5,37 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectStore } from "../src/main/services/project-store";
 import { registerIpc } from "../src/main/ipc";
 
-const mock = vi.hoisted(() => ({ handlers: new Map<string, Function>(), root: "" }));
+const mock = vi.hoisted(() => ({
+  handlers: new Map<string, Function>(),
+  root: "",
+  output: "",
+  // Optional override that lets a test hold a render inside its preflight.
+  captureSystemResources: undefined as undefined | ((...args: unknown[]) => Promise<unknown>),
+}));
 
 vi.mock("electron", () => ({
-  app: { getPath: () => mock.root },
+  app: { getPath: () => mock.root, getAppMetrics: () => [] },
   BrowserWindow: { fromWebContents: () => undefined, getAllWindows: () => [] },
   clipboard: {},
   shell: {},
-  dialog: {},
+  dialog: { showSaveDialog: async () => ({ canceled: false, filePath: mock.output }) },
   ipcMain: { handle: (channel: string, listener: Function) => mock.handlers.set(channel, listener) },
 }));
+
+vi.mock("../src/main/services/system-resource", async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    ...actual,
+    captureSystemResources: (...args: unknown[]) =>
+      mock.captureSystemResources ? mock.captureSystemResources(...args) : actual.captureSystemResources(...args),
+  };
+});
 
 const roots: string[] = [];
 
 afterEach(async () => {
   mock.handlers.clear();
+  mock.captureSystemResources = undefined;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -31,6 +47,7 @@ async function setup(override: (args: any[]) => void) {
   const root = await mkdtemp(path.join(os.tmpdir(), "sw-ipc-admission-"));
   roots.push(root);
   mock.root = root;
+  mock.output = path.join(root, "test.mp4");
   const store = new ProjectStore(path.join(root, "data"));
   await store.initialize();
   const args: any[] = new Array(27).fill({});
@@ -131,5 +148,85 @@ describe("R1-16 YouTube upload admission", () => {
 
     expect(await one).toBe("AbortError");
     expect(upload).not.toHaveBeenCalled();
+  });
+});
+
+describe("R2-08 render benchmark admission", () => {
+  it("runs at most one benchmark and rejects a second overlapping call", async () => {
+    let finish!: (value: unknown) => void;
+    const pending = new Promise((resolve) => (finish = resolve));
+    // Only the first call holds; a second, unguarded call resolves at once so the failure is immediate.
+    const run = vi.fn().mockReturnValueOnce(pending).mockResolvedValue({});
+    const { invoke } = await setup((args) => {
+      args[20] = { acquire: () => () => {} };
+      args[22] = { run };
+    });
+
+    const one = invoke("render-benchmark:run");
+    const two = invoke("render-benchmark:run").then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+
+    expect(await two).toContain("效能測試");
+    expect(run).toHaveBeenCalledTimes(1);
+    finish({});
+    await one;
+  });
+
+  it("refuses remote render preparation while a benchmark holds the render admission", async () => {
+    let finish!: (value: unknown) => void;
+    const pending = new Promise((resolve) => (finish = resolve));
+    const run = vi.fn(() => pending);
+    const { invoke } = await setup((args) => {
+      args[20] = { acquire: () => () => {} };
+      args[22] = { run };
+    });
+
+    const one = invoke("render-benchmark:run");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    // Remote prepare is gated by the same admission and must refuse while the benchmark runs.
+    await expect(invoke("remote-control:prepare-render", { outputToken: "x" })).rejects.toThrow("目前不能準備遠端轉檔");
+    finish({});
+    await one;
+  });
+
+  it("blocks a benchmark while a render is still in its preflight", async () => {
+    let releaseHold!: (reason: Error) => void;
+    mock.captureSystemResources = () =>
+      new Promise<never>((_resolve, reject) => {
+        releaseHold = reject;
+      });
+    const run = vi.fn(async () => ({}));
+    const { invoke } = await setup((args) => {
+      args[20] = { acquire: () => () => {} };
+      args[22] = { run };
+    });
+    const token = (await invoke("concat:choose-output", "test")) as { token: string };
+
+    const render = invoke("concat:start", {
+      outputToken: token.token,
+      resolution: "360P",
+      orderedAssetIds: [],
+      transitionSeconds: 0.3,
+    }).catch((error: Error) => error.message);
+    await vi.waitFor(() => expect(releaseHold).toBeDefined());
+
+    await expect(invoke("render-benchmark:run")).rejects.toThrow("效能測試");
+    expect(run).not.toHaveBeenCalled();
+    releaseHold(new Error("preflight stopped by test"));
+    expect(await render).toContain("preflight stopped by test");
+  });
+
+  it("releases benchmark admission after a benchmark failure so a retry can run", async () => {
+    const run = vi.fn().mockRejectedValueOnce(new Error("benchmark failed")).mockResolvedValueOnce({ ok: true });
+    const { invoke } = await setup((args) => {
+      args[20] = { acquire: () => () => {} };
+      args[22] = { run };
+    });
+
+    await expect(invoke("render-benchmark:run")).rejects.toThrow("benchmark failed");
+    await expect(invoke("render-benchmark:run")).resolves.toEqual({ ok: true });
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });

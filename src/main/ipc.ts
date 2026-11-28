@@ -988,12 +988,16 @@ export function registerIpc(
   );
   ipcMain.handle("render-benchmark:run", async () => {
     if (concatController || renderAdmission.busy) throw new Error("目前已有 App 轉檔進行中，效能測試不會搶用資源。");
-    const releasePowerGuard = renderPowerGuard.acquire();
-    try {
-      return await renderBenchmark.run();
-    } finally {
-      releasePowerGuard();
-    }
+    // Claim the same render admission renders use, before the first await, so a
+    // second benchmark or a render cannot run alongside it.
+    return withRenderAdmission(async () => {
+      const releasePowerGuard = renderPowerGuard.acquire();
+      try {
+        return await renderBenchmark.run();
+      } finally {
+        releasePowerGuard();
+      }
+    });
   });
   const publishConcatProgress = (progress: import("../shared/domain").ConcatRenderProgress) => {
     renderCommands.updateProgress(progress);
