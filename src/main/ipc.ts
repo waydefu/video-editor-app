@@ -63,7 +63,7 @@ import type {
 import { ConcatRenderService } from "./services/concat-render";
 import { IntroAnalyzer } from "./services/intro-analyzer";
 import { PreviewCache } from "./services/preview-cache";
-import { ProjectStore } from "./services/project-store";
+import { ProjectStore, type ProjectContext } from "./services/project-store";
 import { emptyCancelledResult, MEDIA_DIALOG_FILTERS, SourceService } from "./services/source-service";
 import { ExternalPlayerService } from "./services/external-player";
 import { PlayerSettingsStore } from "./services/player-settings";
@@ -538,6 +538,20 @@ export function registerIpc(
   };
   let activeSubtitleOperations = 0;
   let projectSwitchInProgress = false;
+  let activeProjectScopedJobs = 0;
+  // Import, BGM and metadata jobs commit into the project they started in. Admission is refused while a switch runs,
+  // and a switch is refused while any of these jobs is admitted. The context is captured before dialogs; the store
+  // re-checks it inside its write queue, so a job that outlives its project drops its result.
+  const runProjectScopedJob = async <T>(context: ProjectContext, operation: () => Promise<T>): Promise<T> => {
+    if (projectSwitchInProgress) throw new Error("專案正在切換，請稍後再試。");
+    if (!store.isCurrentProjectContext(context)) throw new Error("專案已切換，請重新開始這項作業。");
+    activeProjectScopedJobs += 1;
+    try {
+      return await operation();
+    } finally {
+      activeProjectScopedJobs -= 1;
+    }
+  };
   const withProjectOperation = async <T>(operation: () => Promise<T>): Promise<T> => {
     if (projectSwitchInProgress) throw new Error("專案正在切換，請在載入完成後重試字幕操作。");
     activeSubtitleOperations += 1;
@@ -559,6 +573,8 @@ export function registerIpc(
   const assertNoRunningProjectJobs = () => {
     if (renderAdmission.busy) throw new Error("轉檔或資源作業正在進行，請完成後再切換專案。");
     if (projectSwitchInProgress) throw new Error("已有專案開啟或另存作業正在執行，請在完成後重試。");
+    if (activeProjectScopedJobs > 0)
+      throw new Error("匯入、配樂或素材中繼資料作業正在進行，請完成或取消後再切換專案。");
     if (
       activeSubtitleOperations > 0 ||
       subtitleVisualController ||
@@ -603,6 +619,7 @@ export function registerIpc(
   };
 
   const runImport = async (event: Electron.IpcMainInvokeEvent, mode: "FILES" | "FOLDER" | "INTRO_FILES") => {
+    const context = store.getProjectContext(); // Before the dialog: the dialog may stay open across a project switch.
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const isFolder = mode === "FOLDER";
     const preferenceKey = mode === "INTRO_FILES" ? "INTRO_MEDIA" : mode === "FILES" ? "SOURCE_MEDIA" : "SOURCE_FOLDER";
@@ -618,20 +635,27 @@ export function registerIpc(
     }
     await userPreferences.rememberDirectory(preferenceKey, result.filePaths[0], isFolder);
 
-    importController?.abort();
-    importController = new AbortController();
-    try {
-      return await sources.importSelected(result.filePaths, importController.signal, (progress) => {
-        if (!event.sender.isDestroyed()) event.sender.send("import:progress", progress);
-      });
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        return emptyCancelledResult(store.getProject());
+    return runProjectScopedJob(context, async () => {
+      importController?.abort();
+      importController = new AbortController();
+      try {
+        return await sources.importSelected(
+          result.filePaths,
+          importController.signal,
+          (progress) => {
+            if (!event.sender.isDestroyed()) event.sender.send("import:progress", progress);
+          },
+          context,
+        );
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return emptyCancelledResult(store.getProject());
+        }
+        throw error;
+      } finally {
+        importController = undefined;
       }
-      throw error;
-    } finally {
-      importController = undefined;
-    }
+    });
   };
 
   ipcMain.handle("app:get-info", () => ({ version: app.getVersion(), productName: app.getName() }));
@@ -880,7 +904,10 @@ export function registerIpc(
   ipcMain.handle("subtitle:force-re-review", (_event, scopes: SubtitleTimelineScope[]) =>
     store.forceSubtitleReReview(scopes),
   );
-  ipcMain.handle("source:metadata", (_event, assetId: string) => sources.ensureMetadata(assetId));
+  ipcMain.handle("source:metadata", (_event, assetId: string) => {
+    const context = store.getProjectContext();
+    return runProjectScopedJob(context, () => sources.ensureMetadata(assetId));
+  });
   ipcMain.handle("project:set-sort", (_event, sortMode: SortMode) => {
     if (!SORT_MODES.has(sortMode)) throw new Error("排序模式無效。");
     return store.setSortMode(sortMode);
@@ -1568,6 +1595,7 @@ export function registerIpc(
     externalPlayers.open(assetId, target),
   );
   ipcMain.handle("bgm:choose-files", async (event) => {
+    const context = store.getProjectContext();
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options: Electron.OpenDialogOptions = {
       title: "選擇 MP3 配樂",
@@ -1579,13 +1607,15 @@ export function registerIpc(
     if (result.canceled || !result.filePaths.length)
       return { cancelled: true, addedCount: 0, errors: [], project: store.getProject() };
     await userPreferences.rememberDirectory("BGM", result.filePaths[0]);
-    return bgm.importSelected(result.filePaths);
+    return runProjectScopedJob(context, () => bgm.importSelected(result.filePaths, undefined, context));
   });
-  ipcMain.handle("bgm:add-youtube-references", (_event, urls: string[]) =>
-    bgm.addYoutubeReferences(Array.isArray(urls) ? urls : []),
-  );
+  ipcMain.handle("bgm:add-youtube-references", (_event, urls: string[]) => {
+    const context = store.getProjectContext();
+    return runProjectScopedJob(context, () => bgm.addYoutubeReferences(Array.isArray(urls) ? urls : [], context));
+  });
   ipcMain.handle("bgm:resolve-reference", async (event, trackId: string, rightsConfirmed: boolean) => {
     if (!rightsConfirmed) throw new Error("請先確認音檔使用權，再指定本機 MP3。");
+    const context = store.getProjectContext();
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options: Electron.OpenDialogOptions = {
       title: "選擇自有或已授權的 MP3",
@@ -1596,7 +1626,9 @@ export function registerIpc(
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
     if (result.canceled || !result.filePaths[0]) return null;
     await userPreferences.rememberDirectory("BGM", result.filePaths[0]);
-    return bgm.resolveReference(trackId, result.filePaths[0], rightsConfirmed);
+    return runProjectScopedJob(context, () =>
+      bgm.resolveReference(trackId, result.filePaths[0], rightsConfirmed, undefined, context),
+    );
   });
   ipcMain.handle("bgm:sequence", () => store.sequenceBgmTracks());
   ipcMain.handle("project:set-source-audio-volume", (_event, volumePercent: number) =>

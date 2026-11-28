@@ -4,7 +4,7 @@ import type { ImportProgress, ImportResult, ProjectManifest, SourceAsset, Source
 import { DEFAULT_IMAGE_DURATION_MS } from "../../shared/domain";
 import { normalizedPathIdentity, previewCacheKey } from "./identity";
 import { MediaProbe } from "./media-probe";
-import { ProjectStore } from "./project-store";
+import { isStaleProjectContextError, type ProjectContext, ProjectStore } from "./project-store";
 
 const VIDEO_EXTENSIONS = new Set([
   ".mp4",
@@ -55,10 +55,15 @@ export class SourceService {
     private readonly probe: MediaProbe,
   ) {}
 
+  /**
+   * `context` should be captured by the caller before any dialog or await. If the project was replaced while the
+   * import ran, nothing is committed and the result is reported as cancelled.
+   */
   async importSelected(
     selectedPaths: string[],
     signal?: AbortSignal,
     onProgress?: (progress: ImportProgress) => void,
+    context: ProjectContext = this.store.getProjectContext(),
   ): Promise<ImportResult> {
     const files: string[] = [];
     let unsupportedCount = 0;
@@ -144,7 +149,13 @@ export class SourceService {
       }
     }
 
-    const updated = assets.length > 0 ? await this.store.addAssets(assets) : this.store.getProject();
+    let updated: ProjectManifest;
+    try {
+      updated = assets.length > 0 ? await this.store.addAssets(assets, context) : this.store.getProject();
+    } catch (error) {
+      if (isStaleProjectContextError(error)) return emptyCancelledResult(this.store.getProject());
+      throw error;
+    }
     onProgress?.({
       phase: "ADDING",
       discovered: files.length,

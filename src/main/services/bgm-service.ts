@@ -3,7 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_BGM_VOLUME_PERCENT, type BgmImportResult, type BgmTrack } from "../../shared/domain";
 import { MediaProbe } from "./media-probe";
-import { ProjectStore } from "./project-store";
+import { isStaleProjectContextError, ProjectStore, type ProjectContext } from "./project-store";
 import { buildTimelinePlan } from "../../shared/timeline-plan";
 
 export class BgmService {
@@ -12,7 +12,12 @@ export class BgmService {
     private readonly probe: MediaProbe,
   ) {}
 
-  async importSelected(paths: string[], signal?: AbortSignal): Promise<BgmImportResult> {
+  /** `context` should be captured by the caller before its dialog; a stale project commits nothing. */
+  async importSelected(
+    paths: string[],
+    signal?: AbortSignal,
+    context: ProjectContext = this.store.getProjectContext(),
+  ): Promise<BgmImportResult> {
     const tracks: BgmTrack[] = [];
     const errors: string[] = [];
     const currentProject = this.store.getProject();
@@ -53,11 +58,20 @@ export class BgmService {
         errors.push(`${path.basename(selected)}：${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    const project = tracks.length ? await this.store.addBgmTracks(tracks) : this.store.getProject();
-    return { cancelled: false, addedCount: tracks.length, errors, project };
+    try {
+      const project = tracks.length ? await this.store.addBgmTracks(tracks, context) : this.store.getProject();
+      return { cancelled: false, addedCount: tracks.length, errors, project };
+    } catch (error) {
+      if (isStaleProjectContextError(error))
+        return { cancelled: true, addedCount: 0, errors, project: this.store.getProject() };
+      throw error;
+    }
   }
 
-  async addYoutubeReferences(urls: string[]): Promise<BgmImportResult> {
+  async addYoutubeReferences(
+    urls: string[],
+    context: ProjectContext = this.store.getProjectContext(),
+  ): Promise<BgmImportResult> {
     const tracks: BgmTrack[] = [];
     const errors: string[] = [];
     const existing = new Set(
@@ -111,8 +125,14 @@ export class BgmService {
         errors.push(`${candidate.slice(0, 120)}：${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    const project = tracks.length ? await this.store.addBgmTracks(tracks) : this.store.getProject();
-    return { cancelled: false, addedCount: tracks.length, errors, project };
+    try {
+      const project = tracks.length ? await this.store.addBgmTracks(tracks, context) : this.store.getProject();
+      return { cancelled: false, addedCount: tracks.length, errors, project };
+    } catch (error) {
+      if (isStaleProjectContextError(error))
+        return { cancelled: true, addedCount: 0, errors, project: this.store.getProject() };
+      throw error;
+    }
   }
 
   async resolveReference(
@@ -120,14 +140,21 @@ export class BgmService {
     selected: string,
     rightsConfirmed: boolean,
     signal?: AbortSignal,
+    context: ProjectContext = this.store.getProjectContext(),
   ): Promise<BgmImportResult> {
     if (!rightsConfirmed) throw new Error("請先確認此音檔是您自有、已取得授權，或由 YouTube Audio Library 正式下載。");
     const current = this.store.getProject().bgmTracks.find((track) => track.id === trackId);
     if (!current || current.resolutionStatus !== "NEEDS_LOCAL_FILE")
       throw new Error("找不到待補音檔的 YouTube 配樂參考。");
     const imported = await this.inspectLocalTrack(selected, current.id, current.sourceUrl, signal);
-    const project = await this.store.resolveBgmTrack(trackId, imported);
-    return { cancelled: false, addedCount: 1, errors: [], project };
+    try {
+      const project = await this.store.resolveBgmTrack(trackId, imported, context);
+      return { cancelled: false, addedCount: 1, errors: [], project };
+    } catch (error) {
+      if (isStaleProjectContextError(error))
+        return { cancelled: true, addedCount: 0, errors: [], project: this.store.getProject() };
+      throw error;
+    }
   }
 
   private async inspectLocalTrack(
