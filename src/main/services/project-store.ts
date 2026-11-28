@@ -599,6 +599,17 @@ export function isStaleProjectContextError(error: unknown): error is StaleProjec
   );
 }
 
+/** Only these technical fields may be written back by a probe or refresh; user edits are never part of it. */
+export interface SourceTechnicalPatch {
+  sizeBytes?: number;
+  fileModifiedAt?: string;
+  previewCacheKey?: string;
+  metadataState?: SourceAsset["metadataState"];
+  metadataError?: string;
+  mediaInfo?: SourceAsset["mediaInfo"];
+  previewRange?: SourceAsset["previewRange"];
+}
+
 export class ProjectStore {
   private current: ProjectManifest = createProject();
   private generation = 0;
@@ -873,6 +884,35 @@ export class ProjectStore {
       true,
       context,
     );
+  }
+
+  /**
+   * Patches only the technical fields a probe or refresh produced. Returns undefined (commits nothing) when the asset
+   * was removed, its source path changed, or the guard values no longer match the file the probe measured.
+   * User edits (trim, image duration, zoom, audio settings, sort) are never overwritten.
+   */
+  async patchSourceTechnical(
+    context: ProjectContext,
+    assetId: string,
+    guard: { sourcePath: string; sizeBytes?: number; fileModifiedAt?: string },
+    patch: SourceTechnicalPatch,
+  ): Promise<SourceAsset | undefined> {
+    let patched: SourceAsset | undefined;
+    await this.mutate(
+      (project) => {
+        const index = project.sources.findIndex((item) => item.id === assetId);
+        if (index < 0) return;
+        const existing = project.sources[index];
+        if (existing.sourcePath !== guard.sourcePath) return;
+        if (guard.sizeBytes !== undefined && existing.sizeBytes !== guard.sizeBytes) return;
+        if (guard.fileModifiedAt !== undefined && existing.fileModifiedAt !== guard.fileModifiedAt) return;
+        project.sources[index] = { ...existing, ...patch };
+        patched = clone(project.sources[index]);
+      },
+      false,
+      context,
+    );
+    return patched;
   }
 
   async updateAsset(asset: SourceAsset): Promise<SourceAsset> {

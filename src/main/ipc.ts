@@ -909,7 +909,7 @@ export function registerIpc(
   );
   ipcMain.handle("source:metadata", (_event, assetId: string) => {
     const context = store.getProjectContext();
-    return runProjectScopedJob(context, () => sources.ensureMetadata(assetId));
+    return runProjectScopedJob(context, () => sources.ensureMetadata(assetId, undefined, context));
   });
   ipcMain.handle("project:set-sort", (_event, sortMode: SortMode) => {
     if (!SORT_MODES.has(sortMode)) throw new Error("排序模式無效。");
