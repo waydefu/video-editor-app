@@ -103,7 +103,13 @@ let mainWindow: BrowserWindow | undefined;
 let applicationQuitting = false;
 let remoteControlServer: RemoteControlServer | undefined;
 const renderPowerGuard = new RenderPowerGuard(powerSaveBlocker);
-const postSuccessPower = new PostSuccessPowerScheduler({ isBusy: () => renderPowerGuard.isActive });
+// Assigned once registerIpc wires the shared activity gate; until then the app counts as busy.
+let blockingWork: (options?: { ignoreRenderAdmission?: boolean }) => string | undefined = () =>
+  "應用程式尚未完成初始化";
+// Power countdown must not fire while imports, AI, uploads or renders are in flight.
+const postSuccessPower = new PostSuccessPowerScheduler({
+  isBusy: () => blockingWork({ ignoreRenderAdmission: true }) !== undefined,
+});
 const confirmedCloseWindowIds = new Set<number>();
 
 app.on("before-quit", (event) => {
@@ -114,7 +120,7 @@ app.on("before-quit", (event) => {
     Boolean(process.env.APP_SUBTITLE_REVIEW_QA);
   const target = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
   // Render active: reuse the in-app close confirmation instead of quitting past it.
-  if (!automated && renderPowerGuard.isActive && target) {
+  if (!automated && target && (renderPowerGuard.isActive || blockingWork() !== undefined)) {
     event.preventDefault();
     target.webContents.send("app:close-requested");
     return;
@@ -161,7 +167,7 @@ function createWindow(): BrowserWindow {
     window.webContents.send("app:close-requested");
   });
   window.on("query-session-end", (event) => {
-    if (renderPowerGuard.isActive) event.preventDefault();
+    if (renderPowerGuard.isActive || blockingWork() !== undefined) event.preventDefault();
   });
 
   const devServer = process.env.VITE_DEV_SERVER_URL;
@@ -536,7 +542,7 @@ void app.whenReady().then(async () => {
       ? path.join(process.resourcesPath, "assets", "benchmark-render-modes.ps1")
       : path.join(app.getAppPath(), "scripts", "benchmark-render-modes.ps1"),
   );
-  const sealForUpdate = registerIpc(
+  const { sealForUpdate, blockingWorkReason } = registerIpc(
     store,
     sources,
     previews,
@@ -565,6 +571,7 @@ void app.whenReady().then(async () => {
     remoteControl,
     postSuccessPower,
   );
+  blockingWork = blockingWorkReason;
   postSuccessPower.subscribe((status) => {
     for (const window of BrowserWindow.getAllWindows())
       if (!window.isDestroyed()) window.webContents.send("power-action:status", status);
@@ -576,6 +583,17 @@ void app.whenReady().then(async () => {
     if (!target || target.isDestroyed() || updateClosing) return;
     if (renderPowerGuard.isActive) {
       target.webContents.send("app:close-requested");
+      return;
+    }
+    // Close, armed update and power share one gate: a refused close keeps the armed update intact.
+    const busyReason = blockingWork();
+    if (busyReason) {
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "尚未關閉",
+        message: "目前不能關閉 SceneryWalker。",
+        detail: `${busyReason}。請等待完成或取消後再關閉；進行中的作業不會被中斷。`,
+      });
       return;
     }
     if (updates.isArmed) {

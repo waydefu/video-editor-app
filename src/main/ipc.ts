@@ -134,6 +134,7 @@ import {
   completedYoutubeUploadQualifies,
   PostSuccessPowerScheduler,
 } from "./services/post-success-power";
+import { activityBlockReason } from "./services/activity-gate";
 
 const SORT_MODES = new Set<SortMode>([
   "MANUAL_ORDER",
@@ -174,7 +175,10 @@ export function registerIpc(
   renderCommands: RenderCommandState,
   remoteControl: RemoteControlServer,
   postSuccessPower: PostSuccessPowerScheduler,
-): () => () => void {
+): {
+  sealForUpdate: () => () => void;
+  blockingWorkReason: (options?: { ignoreRenderAdmission?: boolean }) => string | undefined;
+} {
   const activity = new IpcActivityGate();
   const ipcMain = {
     handle: (channel: string, listener: Parameters<typeof electronIpcMain.handle>[1]) =>
@@ -542,10 +546,13 @@ export function registerIpc(
       activeSubtitleOperations -= 1;
     }
   };
-  const withRenderAdmission = <T>(operation: () => Promise<T>): Promise<T> =>
+  const withRenderAdmission = <T>(operation: () => Promise<T>, startsRender = false): Promise<T> =>
     renderAdmission.run(async () => {
       if (activity.isSealed) throw new Error("正在安全切換版本，暫時不能開始轉檔。");
       if (projectSwitchInProgress) throw new Error("專案正在切換，請完成後再轉檔。");
+      // A new render cancels any countdown before its preflight; the power check ignores render admission.
+      if (startsRender && postSuccessPower.isScheduled)
+        postSuccessPower.cancel("偵測到新的轉檔工作；已取消先前排定的電源動作。");
       return operation();
     });
   const assertNoRunningProjectJobs = () => {
@@ -1125,7 +1132,7 @@ export function registerIpc(
     }
   };
   const executeConcatStart = (request: ConcatRenderRequest) =>
-    withRenderAdmission(() => executeConcatStartUnlocked(request));
+    withRenderAdmission(() => executeConcatStartUnlocked(request), true);
   ipcMain.handle("concat:start", (_event, request: ConcatRenderRequest) => executeConcatStart(request));
   ipcMain.handle("remote-control:prepare-render", async (_event, request: ConcatRenderRequest) => {
     if (renderAdmission.busy || projectSwitchInProgress) throw new Error("目前不能準備遠端轉檔。");
@@ -1312,7 +1319,7 @@ export function registerIpc(
       const id = checkpointId ?? (await concatRenderer.getResumeOffer())?.checkpointId;
       if (!id) throw new Error("目前沒有可續轉的 checkpoint。");
       return executeConcatResumeUnlocked(id);
-    });
+    }, true);
   ipcMain.handle("concat:resume", (_event, checkpointId: string) => executeConcatResume(checkpointId));
   renderCommands.setHandlers({
     startPrepared: executeConcatStart,
@@ -3055,21 +3062,37 @@ export function registerIpc(
   ipcMain.handle("platform-upload:open-portal", (_event, platform: BrowserUploadPlatform) =>
     platformUploadHandoff.openPortal(platform),
   );
-  return () => {
+  // Single activity gate shared by update seal, app close and post-success power.
+  // The render admission flag is ignored only when a render itself schedules power (its own admission is active).
+  const blockingWorkReason = (options: { ignoreRenderAdmission?: boolean } = {}): string | undefined =>
+    activityBlockReason({
+      renderInFlight: renderPowerGuard.isActive,
+      renderPreflight: !options.ignoreRenderAdmission && renderAdmission.busy,
+      projectSwitching: projectSwitchInProgress,
+      backgroundWork: Boolean(
+        importController ||
+        introController ||
+        voiceInputController ||
+        musicSuggestionController ||
+        audioPreviewController ||
+        aiPublishController ||
+        youtubeAuthController ||
+        youtubeUploadController ||
+        activeSubtitleOperations > 0 ||
+        subtitleVisualController ||
+        subtitleAiCheckController ||
+        subtitleAiCheckRunPromise ||
+        aiSubtitleController ||
+        subtitleExportController ||
+        subtitlePreviewController ||
+        materialAnalysisController ||
+        previewControllers.size > 0,
+      ),
+    });
+  const sealForUpdate = (): (() => void) => {
     assertNoRunningProjectJobs();
-    if (
-      renderPowerGuard.isActive ||
-      importController ||
-      introController ||
-      voiceInputController ||
-      musicSuggestionController ||
-      audioPreviewController ||
-      aiPublishController ||
-      youtubeAuthController ||
-      youtubeUploadController ||
-      previewControllers.size > 0
-    )
-      throw new Error("目前還有匯入、預覽、AI 或上傳工作，請完成後再切換版本。");
+    if (blockingWorkReason()) throw new Error("目前還有匯入、預覽、AI 或上傳工作，請完成後再切換版本。");
     return activity.seal();
   };
+  return { sealForUpdate, blockingWorkReason };
 }
