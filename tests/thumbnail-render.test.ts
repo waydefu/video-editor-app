@@ -127,6 +127,11 @@ describe("thumbnail output protection (R1-01) and temp cleanup (R1-17)", () => {
     return { dir, source };
   }
   const imageAsset = (sourcePath: string) => ({ kind: "IMAGE", sourcePath }) as never;
+  const withText = (text: string) =>
+    ({
+      sourceTimeMs: 0,
+      style: { ...(cand as { style: object }).style, text },
+    }) as never;
 
   it("R1-01: refuses to export over the selected source image and never runs ffmpeg", async () => {
     const { dir, source } = await setupDir();
@@ -171,6 +176,38 @@ describe("thumbnail output protection (R1-01) and temp cleanup (R1-17)", () => {
         }),
       ).rejects.toThrow(/專案素材/);
       expect(sha256(await readFile(excluded))).toBe(before);
+    } finally {
+      ffmpegMode.mode = "fail";
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R1-17: leaves no partial or text file in the output folder when ffmpeg fails", async () => {
+    const { dir, source } = await setupDir();
+    try {
+      ffmpegMode.mode = "fail";
+      await expect(
+        renderThumbnail(imageAsset(source), withText("hello"), path.join(dir, "out.png"), "png", "ffmpeg"),
+      ).rejects.toThrow(/縮圖產出失敗/);
+      expect((await readdir(dir)).sort()).toEqual(["photo.png"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R1-17: aborting a running thumbnail kills ffmpeg and removes only this job's temp files", async () => {
+    const { dir, source } = await setupDir();
+    try {
+      ffmpegMode.mode = "hang";
+      const controller = new AbortController();
+      const before = spawnedArgs.length;
+      const running = renderThumbnail(imageAsset(source), withText("hi"), path.join(dir, "out.png"), "png", "ffmpeg", {
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(spawnedArgs.length).toBeGreaterThan(before));
+      controller.abort();
+      await expect(running).rejects.toThrow(/已取消/);
+      expect((await readdir(dir)).sort()).toEqual(["photo.png"]);
     } finally {
       ffmpegMode.mode = "fail";
       await rm(dir, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SourceAsset, ThumbnailCandidate } from "../../shared/domain";
@@ -8,6 +9,7 @@ import { assertOutputPathNotProtected, type ProtectedPathEntry } from "./protect
 export interface ThumbnailRenderOptions {
   /** Other project-referenced files (all sources, BGM) that the output must never touch. */
   protectedPaths?: readonly ProtectedPathEntry[];
+  signal?: AbortSignal;
 }
 
 function escapeFilterPath(value: string): string {
@@ -36,48 +38,34 @@ export async function renderThumbnail(
   ];
   await assertOutputPathNotProtected(outputPath, protectedPaths);
   await mkdir(path.dirname(outputPath), { recursive: true });
-  const partial = `${outputPath}.${process.pid}.partial${extension}`;
+  // Per-job random names: a job only ever removes the files it created itself.
+  const partial = `${outputPath}.${process.pid}.${randomUUID()}.partial${extension}`;
   const textPath = `${partial}.txt`;
-  await rm(partial, { force: true });
-  await writeFile(textPath, candidate.style.text.slice(0, 80), "utf8");
-  const scalePad = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black";
-  const overlay =
-    candidate.style.overlayOpacityPercent > 0
-      ? `,drawbox=x=0:y=0:w=iw:h=ih:color=black@${Math.max(0, Math.min(100, candidate.style.overlayOpacityPercent)) / 100}:t=fill`
-      : "";
-  const textColor = HEX_COLOR.test(candidate.style.textColor) ? candidate.style.textColor : "#FFFFFF";
-  const text = candidate.style.text.trim()
-    ? `,drawtext=fontfile='${escapeFilterPath(fontPath())}':textfile='${escapeFilterPath(textPath)}':fontcolor=${textColor}:fontsize=${Math.max(18, Math.min(180, Math.round(candidate.style.fontSizePx)))}:borderw=${Math.max(0, Math.min(12, Math.round(candidate.style.outlineWidthPx)))}:bordercolor=black:x=w*${Math.max(0, Math.min(100, candidate.style.textXPercent)) / 100}-text_w/2:y=h*${Math.max(0, Math.min(100, candidate.style.textYPercent)) / 100}-text_h/2`
-    : "";
-  const args = [
-    "-y",
-    ...(asset.kind === "VIDEO" ? ["-ss", String(Math.max(0, candidate.sourceTimeMs / 1000))] : []),
-    "-i",
-    asset.sourcePath,
-    "-frames:v",
-    "1",
-    "-vf",
-    `${scalePad}${overlay}${text}`,
-    "-an",
-    ...(format === "jpg" ? ["-q:v", "2", "-f", "image2"] : ["-f", "image2"]),
-    partial,
-  ];
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(ffmpegExecutable, args, {
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.once("error", reject);
-    child.once("close", (code) =>
-      code === 0 ? resolve() : reject(new Error(`縮圖產出失敗：${stderr.trim().slice(-400)}`)),
-    );
-  });
   try {
+    await writeFile(textPath, candidate.style.text.slice(0, 80), "utf8");
+    const scalePad = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black";
+    const overlay =
+      candidate.style.overlayOpacityPercent > 0
+        ? `,drawbox=x=0:y=0:w=iw:h=ih:color=black@${Math.max(0, Math.min(100, candidate.style.overlayOpacityPercent)) / 100}:t=fill`
+        : "";
+    const textColor = HEX_COLOR.test(candidate.style.textColor) ? candidate.style.textColor : "#FFFFFF";
+    const text = candidate.style.text.trim()
+      ? `,drawtext=fontfile='${escapeFilterPath(fontPath())}':textfile='${escapeFilterPath(textPath)}':fontcolor=${textColor}:fontsize=${Math.max(18, Math.min(180, Math.round(candidate.style.fontSizePx)))}:borderw=${Math.max(0, Math.min(12, Math.round(candidate.style.outlineWidthPx)))}:bordercolor=black:x=w*${Math.max(0, Math.min(100, candidate.style.textXPercent)) / 100}-text_w/2:y=h*${Math.max(0, Math.min(100, candidate.style.textYPercent)) / 100}-text_h/2`
+      : "";
+    const args = [
+      "-y",
+      ...(asset.kind === "VIDEO" ? ["-ss", String(Math.max(0, candidate.sourceTimeMs / 1000))] : []),
+      "-i",
+      asset.sourcePath,
+      "-frames:v",
+      "1",
+      "-vf",
+      `${scalePad}${overlay}${text}`,
+      "-an",
+      ...(format === "jpg" ? ["-q:v", "2", "-f", "image2"] : ["-f", "image2"]),
+      partial,
+    ];
+    await runThumbnailFfmpeg(ffmpegExecutable, args, options.signal);
     const file = await stat(partial);
     if (!file.isFile() || file.size < 128) throw new Error("縮圖檔案無效。");
     if (file.size > 2 * 1024 * 1024) throw new Error("縮圖超過 YouTube 2 MB 上限，請改用 JPG 或降低畫面複雜度後重試。");
@@ -86,7 +74,38 @@ export async function renderThumbnail(
     await finalizePartialOutput(partial, outputPath);
     return { sizeBytes: file.size, width: 1280, height: 720 };
   } finally {
-    await rm(partial, { force: true });
-    await rm(textPath, { force: true });
+    // Only this job's uuid-named files. A successful finalize has already moved the partial away.
+    await rm(partial, { force: true }).catch(() => undefined);
+    await rm(textPath, { force: true }).catch(() => undefined);
   }
+}
+
+function runThumbnailFfmpeg(executable: string, args: string[], signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("縮圖產出已取消。"));
+      return;
+    }
+    const child = spawn(executable, args, {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    const onAbort = () => child.kill();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.once("error", (error) => {
+      signal?.removeEventListener("abort", onAbort);
+      reject(error);
+    });
+    child.once("close", (code) => {
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) reject(new Error("縮圖產出已取消。"));
+      else if (code === 0) resolve();
+      else reject(new Error(`縮圖產出失敗：${stderr.trim().slice(-400)}`));
+    });
+  });
 }
