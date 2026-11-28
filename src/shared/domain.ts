@@ -2469,6 +2469,7 @@ export interface AppApi {
   getPreviewOutputHistory(): Promise<PreviewOutputHistorySnapshot>;
   chooseExistingPreviewOutputs(): Promise<PreviewOutputImportResult>;
   removePreviewOutputRecord(jobId: string): Promise<PreviewOutputHistorySnapshot>;
+  confirmPreviewOutputIdentity(jobId: string): Promise<PreviewOutputRecord>;
   analyzeIntro(assetIds: string[], maxDurationMs: number, maxSegmentDurationMs: number): Promise<IntroAnalysisResult>;
   cancelIntroAnalysis(): Promise<void>;
   getAiSettings(): Promise<AiSettingsSnapshot>;

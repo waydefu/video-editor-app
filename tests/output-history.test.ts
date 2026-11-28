@@ -243,4 +243,94 @@ describe("output file identity (R2-05)", () => {
     expect(await store.getForUpload(reimported.jobId)).toMatchObject({ identityState: "VERIFIED" });
     expect(await readFile(outputPath, "utf8")).toBe("replaced bytes");
   });
+
+  it("confirms a legacy record in place and keeps its project, purpose, duration and created time", async () => {
+    const { root, outputPath, store } = await registeredStore("confirm-legacy.mp4");
+    const raw = JSON.parse(await readFile(store.historyPath, "utf8"));
+    for (const item of raw.outputs) delete item.identity;
+    await writeFile(store.historyPath, JSON.stringify(raw));
+    const legacy = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await legacy.initialize();
+    const before = await legacy.get("identity-job");
+    expect(before).toMatchObject({ identityState: "UNVERIFIED" });
+
+    const confirmed = await legacy.confirmIdentity("identity-job");
+    expect(confirmed).toMatchObject({
+      identityState: "VERIFIED",
+      exists: true,
+      outputPath: before.outputPath,
+      projectName: "Original project",
+      projectId: "original-id",
+      purpose: "CONCAT",
+      durationMs: 20_000,
+      resolution: "360P",
+      createdAt: before.createdAt,
+      successful: true,
+    });
+    expect(await legacy.getForUpload("identity-job")).toMatchObject({ identityState: "VERIFIED" });
+
+    const onDisk = JSON.parse(await readFile(legacy.historyPath, "utf8"));
+    expect(onDisk.schemaVersion).toBe(1);
+    expect(onDisk.outputs[0]).toMatchObject({
+      jobId: "identity-job",
+      projectName: "Original project",
+      projectId: "original-id",
+      durationMs: 20_000,
+    });
+    expect(onDisk.outputs[0].identity).toMatchObject({ sizeBytes: 14 });
+    expect(await readFile(outputPath, "utf8")).toBe("original bytes");
+  });
+
+  it("confirms a replaced file so it becomes VERIFIED and upload-ready with its record fields", async () => {
+    const { root, outputPath, store } = await registeredStore("confirm-changed.mp4");
+    await writeFile(outputPath, "replaced bytes");
+    expect(await store.get("identity-job")).toMatchObject({ identityState: "CHANGED" });
+
+    const confirmed = await store.confirmIdentity("identity-job");
+    expect(confirmed).toMatchObject({
+      identityState: "VERIFIED",
+      projectName: "Original project",
+      projectId: "original-id",
+      durationMs: 20_000,
+    });
+    expect(await store.getForUpload("identity-job")).toMatchObject({ identityState: "VERIFIED" });
+    expect((await store.snapshot()).outputs[0]).toMatchObject({ identityState: "VERIFIED" });
+
+    const reopened = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await reopened.initialize();
+    expect(await reopened.getForUpload("identity-job")).toMatchObject({ identityState: "VERIFIED" });
+  });
+
+  it("refuses to confirm a missing or unknown output and leaves the index untouched", async () => {
+    const { outputPath, store } = await registeredStore("confirm-missing.mp4");
+    const indexBefore = await readFile(store.historyPath, "utf8");
+    await rm(outputPath);
+    await expect(store.confirmIdentity("identity-job")).rejects.toThrow(/已移動、刪除或離線/);
+    await expect(store.confirmIdentity("no-such-job")).rejects.toThrow(/找不到/);
+    expect(await readFile(store.historyPath, "utf8")).toBe(indexBefore);
+    expect((await store.snapshot()).outputs[0]).toMatchObject({ identityState: "MISSING", exists: false });
+  });
+
+  it("confirms only the chosen record and keeps the index format with other legacy entries unverified", async () => {
+    const { root, store } = await registeredStore("confirm-one.mp4");
+    const other = path.join(root, "other-legacy.mp4");
+    await writeFile(other, "other bytes");
+    await store.importExisting([other]);
+    const raw = JSON.parse(await readFile(store.historyPath, "utf8"));
+    for (const item of raw.outputs) delete item.identity;
+    await writeFile(store.historyPath, JSON.stringify(raw));
+
+    const legacy = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await legacy.initialize();
+    await legacy.confirmIdentity("identity-job");
+
+    const states = Object.fromEntries(
+      (await legacy.snapshot()).outputs.map((item) => [item.fileName, item.identityState]),
+    );
+    expect(states).toEqual({ "confirm-one.mp4": "VERIFIED", "other-legacy.mp4": "UNVERIFIED" });
+    const onDisk = JSON.parse(await readFile(legacy.historyPath, "utf8"));
+    expect(onDisk.schemaVersion).toBe(1);
+    const untouched = onDisk.outputs.find((item: { outputPath: string }) => item.outputPath === other);
+    expect(untouched.identity).toBeUndefined();
+  });
 });

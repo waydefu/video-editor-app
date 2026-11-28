@@ -218,6 +218,7 @@ const api: AppApi & {
   getPreviewOutputHistory: () => ipcRenderer.invoke("output-history:get"),
   chooseExistingPreviewOutputs: () => ipcRenderer.invoke("output-history:choose-existing"),
   removePreviewOutputRecord: (jobId: string) => ipcRenderer.invoke("output-history:remove-record", jobId),
+  confirmPreviewOutputIdentity: (jobId: string) => ipcRenderer.invoke("output-history:confirm-identity", jobId),
   analyzeIntro: (assetIds: string[], maxDurationMs: number, maxSegmentDurationMs: number) =>
     ipcRenderer.invoke("intro:analyze", assetIds, maxDurationMs, maxSegmentDurationMs),
   cancelIntroAnalysis: () => ipcRenderer.invoke("intro:cancel-analysis"),

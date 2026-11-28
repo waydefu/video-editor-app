@@ -35,9 +35,9 @@ interface StoredHistory {
 
 const IDENTITY_EDGE_BYTES = 4 * 1024 * 1024;
 const CHANGED_MESSAGE =
-  "此預覽檔已與登錄時不同（大小、修改時間或內容有變），可能已被替換；為避免誤傳，已停止直接上傳。請先從清單移除此紀錄，再用「加入以前的 MP4」重新選擇此檔以確認。";
+  "此預覽檔已與登錄時不同（大小、修改時間或內容有變），可能已被替換；為避免誤傳，已停止直接上傳。請在歷史清單按「確認此檔案」，確認目前的檔案即為此成品。";
 const UNVERIFIED_MESSAGE =
-  "此紀錄是舊版 App 建立的，沒有檔案身分資料，尚未確認可安全上傳。請先從清單移除此紀錄，再用「加入以前的 MP4」重新選擇此檔以確認。";
+  "此紀錄是舊版 App 建立的，沒有檔案身分資料，尚未確認可安全上傳。請在歷史清單按「確認此檔案」，確認目前的檔案即為此成品。";
 
 async function readRange(handle: FileHandle, position: number, length: number): Promise<Buffer> {
   const buffer = Buffer.alloc(length);
@@ -381,6 +381,21 @@ export class OutputHistoryStore {
     const output = await this.get(jobId);
     if (output.identityState === "VERIFIED") return output;
     throw new Error(output.identityState === "CHANGED" ? CHANGED_MESSAGE : UNVERIFIED_MESSAGE);
+  }
+
+  /**
+   * Explicit user confirmation that the file now at the recorded path is this output.
+   * Captures a fresh identity in place and keeps every other field of the record.
+   * Refuses when the file is missing, empty or unreadable.
+   */
+  async confirmIdentity(jobId: string): Promise<PreviewOutputRecord> {
+    if (typeof jobId !== "string") throw new Error("預覽成品 ID 無效。");
+    const record = this.history.outputs.find((item) => item.jobId === jobId);
+    if (!record) throw new Error("找不到這筆預覽成品紀錄。");
+    const identity = await captureIdentity(record.outputPath);
+    if (!identity) throw new Error("預覽成品已移動、刪除或離線，無法確認；請先放回原檔再試。");
+    await this.mutate((outputs) => outputs.map((item) => (item.jobId === jobId ? { ...item, identity } : item)));
+    return this.get(jobId);
   }
 
   private async currentIdentityState(item: StoredOutput, file: Stats): Promise<PreviewOutputIdentityState> {

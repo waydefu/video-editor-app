@@ -1350,6 +1350,7 @@ export function registerIpc(
     return outputHistory.importExisting(result.filePaths);
   });
   ipcMain.handle("output-history:remove-record", (_event, jobId: string) => outputHistory.removeRecord(jobId));
+  ipcMain.handle("output-history:confirm-identity", (_event, jobId: string) => outputHistory.confirmIdentity(jobId));
   ipcMain.handle(
     "intro:analyze",
     async (event, assetIds: string[], maxDurationMs: number, maxSegmentDurationMs: number) => {
