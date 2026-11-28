@@ -1,3 +1,4 @@
+import { Script } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConcatRenderRequest } from "../src/shared/domain";
 import { RemoteControlServer } from "../src/main/services/remote-control-server";
@@ -65,7 +66,13 @@ describe("RemoteControlServer", () => {
     expect(auth.setCookie).toContain("HttpOnly");
     expect(auth.setCookie).toContain("SameSite=Strict");
     expect(server.status().pairingUrl).toBeUndefined();
-    const cookieHeader = (await fetch(new URL("/", auth.origin))).headers.get("set-cookie");
+    const page = await fetch(new URL("/", auth.origin));
+    const cookieHeader = page.headers.get("set-cookie");
+    expect(await page.text()).toMatch(/data-command="start" disabled/);
+    const script = await fetch(new URL("/app.js", auth.origin));
+    expect(script.ok).toBe(true);
+    const source = await script.text();
+    expect(() => new Script(source)).not.toThrow();
     expect(cookieHeader).toBeNull();
     const denied = await fetch(new URL("/api/state", auth.origin), {
       headers: { Cookie: auth.cookie, Origin: auth.origin },

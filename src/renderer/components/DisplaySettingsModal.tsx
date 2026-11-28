@@ -30,6 +30,12 @@ export function DisplaySettingsModal({
       className="modal-backdrop"
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+        }
+      }}
     >
       <section className="display-settings-modal" role="dialog" aria-modal="true" aria-label="介面顯示設定">
         <header className="modal-header">

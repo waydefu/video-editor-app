@@ -33,6 +33,7 @@ import type {
   PreviewVariant,
   ProjectColorSettings,
   SortMode,
+  ProjectManifest,
   SubtitleCue,
   SubtitleAiCheckAction,
   SubtitleAiCheckJobSnapshot,
@@ -1849,14 +1850,21 @@ export function registerIpc(
       });
     }),
   );
+  let subtitleWorkspaceWrites: Promise<unknown> = Promise.resolve();
+  const withSubtitleWorkspaceWrite = <T>(write: () => Promise<T>): Promise<T> =>
+    withProjectOperation(() => {
+      const queued = subtitleWorkspaceWrites.then(write, write);
+      subtitleWorkspaceWrites = queued;
+      return queued;
+    });
   ipcMain.handle("subtitle:workspace:save", (_event, id: string, cues: SubtitleCue[]) =>
-    withProjectOperation(async () => {
+    withSubtitleWorkspaceWrite(async () => {
       await ownedSubtitleWorkspace(id);
       return standaloneSubtitles.save(id, cues);
     }),
   );
   ipcMain.handle("subtitle:workspace:export", (_event, id: string, token: string) =>
-    withProjectOperation(async () => {
+    withSubtitleWorkspaceWrite(async () => {
       const selected = subtitleOutputTokens.get(token);
       if (!selected || Date.now() - selected.createdAt > 30 * 60 * 1000) throw new Error("請重新選擇字幕儲存位置。");
       const workspace = await ownedSubtitleWorkspace(id);
@@ -2189,7 +2197,7 @@ export function registerIpc(
     }),
   );
   ipcMain.handle("subtitle:ai-check:action", (_event, action: SubtitleAiCheckAction) =>
-    withProjectOperation(async () => {
+    withSubtitleWorkspaceWrite(async () => {
       const snapshot = await subtitleAiCheckJobs.load();
       if (!snapshot || snapshot.workspaceId !== action.workspaceId)
         throw new Error("逐筆 AI 字幕檢查工作不存在或已過期。");
@@ -2205,23 +2213,52 @@ export function registerIpc(
           linkedProject.timelineRevision !== workspace.sourceTimelineRevision)
       )
         throw new Error("專案時間線已變更；AI 建議保留但不能套用，請重新建立檢查工作。");
-      const targetCues =
-        linkedProject && linkedProject.id === workspace.sourceProjectId ? linkedProject.subtitleCues : workspace.cues;
-      const resolved = resolveSubtitleAiCheckAction(
-        targetCues,
-        snapshot.proposals[proposalIndex],
-        action,
-        workspace.videoDurationMs,
-      );
+      const proposal = snapshot.proposals[proposalIndex];
+      const expectedProjectRevision = workspace.sourceCueRevisions?.[proposal.cueId] ?? proposal.baseCueRevision;
+      const projectCueMatches = (project: ProjectManifest) => {
+        const cue = project.subtitleCues.find((item) => item.id === proposal.cueId);
+        return cue !== undefined && subtitleCueRevision(cue) === expectedProjectRevision;
+      };
+      const appliesChange = action.action === "APPLY" || action.action === "EDIT";
+      const resolved =
+        appliesChange && linkedProject && !projectCueMatches(linkedProject)
+          ? { cues: workspace.cues, proposal: { ...proposal, status: "CONFLICT" as const }, conflict: true }
+          : resolveSubtitleAiCheckAction(workspace.cues, proposal, action, workspace.videoDurationMs);
       snapshot.proposals[proposalIndex] = resolved.proposal;
-      const updatedWorkspace =
-        action.action === "APPLY" || action.action === "EDIT"
-          ? await standaloneSubtitles.save(workspace.id, resolved.cues)
-          : workspace;
-      const updatedProject =
-        (action.action === "APPLY" || action.action === "EDIT") && linkedProject && !resolved.conflict
-          ? await store.setSubtitleCues(resolved.cues)
-          : undefined;
+      let updatedWorkspace = workspace;
+      let updatedProject: ProjectManifest | undefined;
+      if (appliesChange && !resolved.conflict) {
+        const appliedCue = resolved.cues.find((cue) => cue.id === proposal.cueId)!;
+        const previousSourceRevisions = workspace.sourceCueRevisions ?? { [proposal.cueId]: expectedProjectRevision };
+        updatedWorkspace = await standaloneSubtitles.save(
+          workspace.id,
+          resolved.cues,
+          linkedProject ? { ...previousSourceRevisions, [proposal.cueId]: subtitleCueRevision(appliedCue) } : undefined,
+        );
+        if (linkedProject) {
+          try {
+            updatedProject = await store.setSubtitleCues((current) => {
+              if (
+                current.id !== workspace.sourceProjectId ||
+                current.timelineRevision !== workspace.sourceTimelineRevision ||
+                !projectCueMatches(current)
+              )
+                throw new Error("專案字幕或時間線已有更新，請重新建立檢查工作。");
+              const { startMs, endMs, text, userEdited, reviewStatus } = appliedCue;
+              return current.subtitleCues.map((cue) =>
+                cue.id === appliedCue.id ? { ...cue, startMs, endMs, text, userEdited, reviewStatus } : cue,
+              );
+            });
+          } catch (error) {
+            try {
+              await standaloneSubtitles.save(workspace.id, workspace.cues, previousSourceRevisions);
+            } catch (restoreError) {
+              throw new AggregateError([error, restoreError], "套用 AI 建議失敗，草稿無法還原。");
+            }
+            throw error;
+          }
+        }
+      }
       await subtitleAiCheckJobs.save(snapshot);
       return {
         workspace: updatedWorkspace,

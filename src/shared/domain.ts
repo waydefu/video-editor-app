@@ -1021,6 +1021,7 @@ export interface StandaloneSubtitleWorkspace {
   /** Present only when the video is a verified output of this exact project revision. */
   sourceProjectId?: string;
   sourceTimelineRevision?: number;
+  sourceCueRevisions?: Record<string, string>;
 }
 
 export type SubtitleAiCheckErrorCode =
@@ -2321,6 +2322,7 @@ export interface AppUpdateStatus {
 }
 
 export interface AppApi {
+  setUiZoomFactor?(factor: number): void;
   getAppInfo(): Promise<AppInfo>;
   checkAppUpdate?(): Promise<AppUpdateStatus>;
   downloadAppUpdate?(): Promise<AppUpdateStatus>;

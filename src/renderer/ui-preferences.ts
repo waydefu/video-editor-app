@@ -1,11 +1,11 @@
 export type UiTextSize = 16 | 18 | 20 | 22 | 24 | 26;
-export type UiZoomPercent = 75 | 85 | 100 | 110 | 125 | 150;
+export type UiZoomPercent = 75 | 85 | 100 | 110 | 125 | 150 | 175 | 200;
 
 export const DEFAULT_UI_TEXT_SIZE: UiTextSize = 18;
 export const UI_TEXT_SIZE_STORAGE_KEY = "scenerywalker.ui-text-size.v1";
 export const UI_ZOOM_STORAGE_KEY = "scenerywalker.ui-zoom.v1";
 export const DEFAULT_UI_ZOOM_PERCENT: UiZoomPercent = 100;
-export const UI_ZOOM_LEVELS: UiZoomPercent[] = [75, 85, 100, 110, 125, 150];
+export const UI_ZOOM_LEVELS: UiZoomPercent[] = [75, 85, 100, 110, 125, 150, 175, 200];
 export const UI_TEXT_SIZE_OPTIONS: Array<{ value: UiTextSize; label: string; detail: string }> = [
   { value: 16, label: "標準", detail: "100%" },
   { value: 18, label: "舒適", detail: "約 113%（預設）" },
@@ -46,7 +46,12 @@ export function readUiZoom(storage: Pick<Storage, "getItem"> = window.localStora
 }
 
 export function applyUiZoom(percent: UiZoomPercent, storage: Pick<Storage, "setItem"> = window.localStorage): void {
-  document.documentElement.style.zoom = String(percent / 100);
+  if (window.sourceApp?.setUiZoomFactor) {
+    document.documentElement.style.removeProperty("zoom");
+    window.sourceApp.setUiZoomFactor(percent / 100);
+  } else {
+    document.documentElement.style.zoom = String(percent / 100);
+  }
   document.documentElement.dataset.uiZoom = String(percent);
   try {
     storage.setItem(UI_ZOOM_STORAGE_KEY, String(percent));

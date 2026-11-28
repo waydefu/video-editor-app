@@ -36,6 +36,12 @@ describe("standalone subtitle drafts", () => {
       await expect(service.save(workspace.id, [{ id: "cue", startMs: 9000, endMs: 11000, text: "x" }])).rejects.toThrow(
         /時間/,
       );
+      const before = await readFile(workspace.draftPath, "utf8");
+      await expect(
+        service.save(workspace.id, [{ id: "cue", startMs: 100.1, endMs: 100.2, text: "rejected" }]),
+      ).rejects.toThrow(/時間/);
+      expect((await service.get(workspace.id)).cues[0].text).toBe("林間步道");
+      expect(await readFile(workspace.draftPath, "utf8")).toBe(before);
       await service.save(workspace.id, []);
       expect(await readFile(workspace.draftPath, "utf8")).toBe("");
     } finally {

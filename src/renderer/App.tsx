@@ -15,6 +15,7 @@ import type {
 import { mainRenderSelections } from "../shared/editing-rules";
 import { buildMainTimelineGroups, buildTimelinePlan } from "../shared/timeline-plan";
 import { formatRenderClock } from "./format";
+import { activeModal, useModalFocus } from "./modal-focus";
 import { AssetCard } from "./components/AssetCard";
 import { ConcatRenderModal } from "./components/ConcatRenderModal";
 import { IntroStudio } from "./components/IntroStudio";
@@ -102,6 +103,7 @@ function playCloseChime(): void {
 }
 
 export function App() {
+  useModalFocus();
   const [project, setProject] = useState<ProjectManifest>();
   const [appInfo, setAppInfo] = useState<AppInfo>();
   const [historyState, setHistoryState] = useState<ProjectHistoryState>({
@@ -140,6 +142,7 @@ export function App() {
   const [placementQueue, setPlacementQueue] = useState<string[]>([]);
   const [showBgm, setShowBgm] = useState(false);
   const [showSubtitles, setShowSubtitles] = useState(false);
+  const [unsavedSubtitles, setUnsavedSubtitles] = useState(false);
   const [materialAnalysisAsset, setMaterialAnalysisAsset] = useState<SourceAsset>();
   const [materialAnalysisScope, setMaterialAnalysisScope] = useState<SubtitleTimelineScope>("MAIN");
   const [confirmRemoveAsset, setConfirmRemoveAsset] = useState<SourceAsset>();
@@ -467,7 +470,7 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.ctrlKey || event.altKey || event.metaKey) return;
+      if (!event.ctrlKey || event.altKey || event.metaKey || activeModal()) return;
       const target = event.target as HTMLElement | null;
       if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")) return;
       const key = event.key.toLowerCase();
@@ -841,15 +844,16 @@ export function App() {
         </div>
       </header>
 
-      <section className="hero">
+      <section className={project.sources.length ? "hero hero--loaded" : "hero"}>
         <div>
-          <span className="eyebrow">SOURCE ORGANIZER · PHASE 1</span>
-          <h1>
-            把素材放進來，
-            <br />
-            先整理出正確順序。
-          </h1>
-          <p>匯入多個影片與照片，依拍攝／檔案時間、自然檔名與加入順序排列。先放心預覽，不碰原始檔。</p>
+          {project.sources.length > 0 ? (
+            <h1>{project.name || "素材專案"}</h1>
+          ) : (
+            <>
+              <h1>匯入影片與照片</h1>
+              <p>依拍攝時間或檔名排序素材，預覽後再輸出。</p>
+            </>
+          )}
           <div className="hero-actions">
             <button className="primary-button" type="button" disabled={busy} onClick={() => void runImport("FILES")}>
               <span>＋</span> 選擇多個檔案
@@ -1386,11 +1390,16 @@ export function App() {
           project={project}
           timelineDurationMs={timelineDurationMs}
           onProjectUpdated={setProject}
+          onUnsavedChange={setUnsavedSubtitles}
           onOpenAiSettings={() => {
+            setUnsavedSubtitles(false);
             setShowSubtitles(false);
             setShowAiSettings(true);
           }}
-          onClose={() => setShowSubtitles(false)}
+          onClose={() => {
+            setUnsavedSubtitles(false);
+            setShowSubtitles(false);
+          }}
         />
       )}
       {confirmRemoveAsset && (
@@ -1422,14 +1431,18 @@ export function App() {
                 ? "轉檔完成前不能關閉"
                 : powerActionStatus.state === "SCHEDULED"
                   ? "關閉會取消自動電源倒數"
-                  : "今天的剪輯先保存到這裡嗎？"}
+                  : showSubtitles && unsavedSubtitles
+                    ? "請先處理尚未儲存的字幕"
+                    : "今天的剪輯先保存到這裡嗎？"}
             </h2>
             <p>
               {renderInProgress
                 ? "目前仍在產出影片，Windows 防睡眠保護已開啟。請等待完成，或先回到轉檔頁取消並等候不完整檔清理完畢。"
                 : powerActionStatus.state === "SCHEDULED"
                   ? `目前仍有 ${powerActionStatus.secondsRemaining ?? 0} 秒電源動作倒數。若確認關閉 App，會明確取消這次倒數，不會靜默消失。`
-                  : "專案會保留目前設定，來源影片與照片不會被修改。真的要關閉 SceneryWalker 嗎？"}
+                  : showSubtitles && unsavedSubtitles
+                    ? "返回字幕審核，儲存或放棄修改後再關閉。"
+                    : "專案會保留目前設定，來源影片與照片不會被修改。真的要關閉 SceneryWalker 嗎？"}
             </p>
             <div>
               <SafeDefaultButton
@@ -1442,7 +1455,7 @@ export function App() {
               <button
                 className="secondary-button"
                 type="button"
-                disabled={renderInProgress}
+                disabled={renderInProgress || (showSubtitles && unsavedSubtitles)}
                 onClick={() => window.sourceApp.confirmAppClose()}
               >
                 確定關閉

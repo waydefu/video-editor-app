@@ -1,7 +1,6 @@
 :root {
   color-scheme: dark;
   font-family: "Segoe UI", "Microsoft JhengHei UI", "Microsoft JhengHei", "微軟正黑體", sans-serif;
-  font-style: italic;
   color: #edf2f6;
   background: #081016;
   font-synthesis: weight;
@@ -61,7 +60,7 @@ html {
 }
 body {
   margin: 0;
-  min-width: 880px;
+  min-width: 0;
   min-height: 100vh;
   background: radial-gradient(circle at 80% -10%, rgba(78, 130, 130, 0.2), transparent 34%), var(--bg);
 }
@@ -322,8 +321,8 @@ button {
 }
 .hero h1 {
   margin: 14px 0 20px;
-  font-size: clamp(2.875rem, 5vw, 4.625rem);
-  line-height: 0.98;
+  font-size: clamp(1.778rem, 4vw, 2rem);
+  line-height: 1.2;
   font-weight: 760;
 }
 .hero p {
@@ -5575,8 +5574,9 @@ button:disabled {
 }
 .empty-inline {
   margin: 0;
-  color: #7d8f99;
-  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  font-size: 0.833rem;
+  line-height: 1.5;
   line-height: 1.5;
 }
 .photo-insertion-modal .notice {
@@ -7297,8 +7297,9 @@ button.danger-text,
 }
 
 .subtitle-review-modal {
-  width: min(1460px, 98vw);
-  height: min(94vh, 920px);
+  width: min(1460px, 100%);
+  height: min(94dvh, 920px);
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -9902,5 +9903,181 @@ button.danger-text,
   }
   .output-history-toolbar span {
     margin-left: 0;
+  }
+}
+
+.topbar {
+  min-height: 0;
+  padding: 8px clamp(12px, 2.5vw, 32px);
+  gap: 10px;
+}
+.topbar-left {
+  gap: 12px;
+}
+.brand-lockup strong {
+  font-style: italic;
+}
+.topbar-actions {
+  gap: 5px;
+}
+.topbar-actions .settings-button,
+.topbar-actions .version-pill {
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  background: var(--secondary-color);
+}
+.topbar-actions .settings-button:hover {
+  border-color: var(--cyan);
+}
+.topbar-actions .protection-pill {
+  padding: 4px 8px;
+}
+.topbar-actions .protection-pill small {
+  display: none;
+}
+
+.hero {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.65fr);
+  padding: clamp(18px, 4vw, 42px) clamp(12px, 3vw, 36px);
+  gap: 24px;
+}
+.hero--loaded {
+  padding-block: 14px;
+  gap: 16px;
+  align-items: center;
+}
+.hero--loaded h1 {
+  margin: 0 0 8px;
+  font-size: 1.333rem;
+  overflow-wrap: anywhere;
+}
+.hero--loaded .hero-actions {
+  margin-top: 0;
+}
+.hero--loaded .hero-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--panel);
+}
+.hero--loaded .hero-summary > div {
+  padding: 6px 8px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  box-shadow: inset -1px 0 var(--line);
+}
+.hero--loaded .hero-summary > div:last-child {
+  box-shadow: none;
+}
+.hero--loaded .hero-summary strong {
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+.library-section {
+  padding-inline: clamp(12px, 3vw, 36px);
+}
+.workspace-nav {
+  flex-wrap: wrap;
+}
+.toolbar-actions {
+  flex-wrap: wrap;
+}
+
+.modal-backdrop {
+  padding: clamp(8px, 2vw, 24px);
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+.modal-backdrop > :is([role="dialog"], [role="alertdialog"]) {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+}
+.subtitle-review-modal > .modal-header,
+.subtitle-review-modal > .settings-footer {
+  gap: 8px;
+  padding: 8px 12px;
+}
+.subtitle-review-modal > .modal-header h2 {
+  font-size: 1.168rem;
+}
+.subtitle-review-modal > .modal-header .eyebrow {
+  display: none;
+}
+.subtitle-review-modal > .settings-footer {
+  flex-wrap: wrap;
+}
+.subtitle-studio-toolbar,
+.subtitle-studio-toolbar > div {
+  flex-wrap: wrap;
+}
+.subtitle-studio-toolbar > div:first-child {
+  flex: 0 1 auto;
+}
+.subtitle-analysis-disclosure > summary {
+  padding: 12px 16px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.standalone-subtitle-review__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-block: 6px;
+  background: #0d161d;
+}
+.standalone-subtitle-review__right {
+  top: 52px;
+}
+.standalone-subtitle-review__editor :is(input, textarea) {
+  line-height: 1.5;
+}
+.standalone-subtitle-review__shortcuts {
+  font-size: 0.778rem;
+  line-height: 1.5;
+}
+.standalone-subtitle-review :is(time, .standalone-subtitle-review__list, .standalone-subtitle-review__playback) {
+  font-variant-numeric: tabular-nums;
+}
+.subtitle-review-modal :is(input, textarea, select, button),
+.standalone-subtitle-review__editor label {
+  min-width: 0;
+  max-width: 100%;
+}
+.subtitle-review-modal button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.subtitle-review-modal .inline-close-guard {
+  max-width: calc(100% - 16px);
+  max-height: 100%;
+  overflow: auto;
+}
+
+@media (max-width: 900px) {
+  .standalone-subtitle-review__right {
+    position: static;
+  }
+}
+@media (max-width: 725px) {
+  .app-shell .topbar {
+    position: static;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .hero--loaded .hero-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .subtitle-review-modal > .settings-footer {
+    max-height: 30%;
+    overflow-y: auto;
+  }
+  .subtitle-visual-job-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

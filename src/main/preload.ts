@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 import type {
   AppApi,
   AiAccountSaveInput,
@@ -70,6 +70,9 @@ const api: AppApi & {
   } | null>;
   setRenderTempLocations(locations: RenderTempLocationConfig[]): Promise<RenderTempLocationConfig[]>;
 } = {
+  setUiZoomFactor: (factor) => {
+    if (Number.isFinite(factor) && factor >= 0.75 && factor <= 2) webFrame.setZoomFactor(factor);
+  },
   getAppInfo: () => ipcRenderer.invoke("app:get-info"),
   checkAppUpdate: () => ipcRenderer.invoke("app:update-check"),
   downloadAppUpdate: () => ipcRenderer.invoke("app:update-download"),

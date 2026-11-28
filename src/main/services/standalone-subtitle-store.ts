@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { StandaloneSubtitleWorkspace, SubtitleCue } from "../../shared/domain";
+import { validateSubtitleCues } from "../../shared/editing-rules";
+import { subtitleCueRevision } from "./subtitle-ai-check";
 import { serializeSrt } from "./subtitle-export";
 
 const allowedVideos = new Map<string, string>();
@@ -19,6 +21,8 @@ export function clearAuthorizedSubtitleVideos(): void {
 }
 
 export class StandaloneSubtitleStore {
+  private writes: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly root: string) {}
   private workspacePath(id: string): string {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("獨立字幕工作區識別碼無效。");
@@ -49,8 +53,11 @@ export class StandaloneSubtitleStore {
       ownerProjectId: source?.projectId ?? ownerProjectId,
       sourceProjectId: source?.projectId,
       sourceTimelineRevision: source?.timelineRevision,
+      sourceCueRevisions: source
+        ? Object.fromEntries(cues.map((cue) => [cue.id, subtitleCueRevision(cue)]))
+        : undefined,
     };
-    return this.write(workspace);
+    return this.queueWrite(() => this.write(workspace));
   }
   async get(id: string, authorizePreview = true): Promise<StandaloneSubtitleWorkspace> {
     const workspace = JSON.parse(await readFile(this.workspacePath(id), "utf8")) as StandaloneSubtitleWorkspace;
@@ -95,8 +102,25 @@ export class StandaloneSubtitleStore {
       return null;
     }
   }
-  async save(id: string, cues: SubtitleCue[]): Promise<StandaloneSubtitleWorkspace> {
-    return this.write({ ...(await this.get(id)), cues, updatedAt: new Date().toISOString() });
+  async save(
+    id: string,
+    cues: SubtitleCue[],
+    sourceCueRevisions?: Record<string, string>,
+  ): Promise<StandaloneSubtitleWorkspace> {
+    return this.queueWrite(async () => {
+      const current = await this.get(id, false);
+      return this.write({
+        ...current,
+        cues,
+        sourceCueRevisions: sourceCueRevisions ?? current.sourceCueRevisions,
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  }
+  private queueWrite<T>(write: () => Promise<T>): Promise<T> {
+    const queued = this.writes.then(write, write);
+    this.writes = queued;
+    return queued;
   }
   private async atomic(filePath: string, text: string): Promise<void> {
     await mkdir(path.dirname(filePath), { recursive: true });
@@ -109,7 +133,7 @@ export class StandaloneSubtitleStore {
     }
   }
   private async write(workspace: StandaloneSubtitleWorkspace): Promise<StandaloneSubtitleWorkspace> {
-    const sorted = [...workspace.cues].sort((a, b) => a.startMs - b.startMs);
+    const sorted = validateSubtitleCues(workspace.cues).sort((a, b) => a.startMs - b.startMs);
     for (let i = 0; i < sorted.length; i++) {
       const cue = sorted[i];
       if (
@@ -124,13 +148,38 @@ export class StandaloneSubtitleStore {
         throw new Error("字幕時間必須依序、不重疊且位於所選影片內。");
     }
     workspace.cues = sorted;
-    // Never store a transient source-media authorization in the workspace JSON.
-    await this.atomic(
-      this.workspacePath(workspace.id),
-      JSON.stringify({ ...workspace, previewUrl: undefined }, null, 2),
+    const files = [
+      [workspace.draftPath, sorted.length ? serializeSrt(sorted) : ""],
+      [this.workspacePath(workspace.id), JSON.stringify({ ...workspace, previewUrl: undefined }, null, 2)],
+      [this.latestPointerPath(workspace.ownerProjectId), JSON.stringify({ id: workspace.id })],
+    ] as const;
+    const previous = await Promise.all(
+      files.map(async ([file]) => {
+        try {
+          return await readFile(file, "utf8");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          return undefined;
+        }
+      }),
     );
-    await this.atomic(workspace.draftPath, sorted.length ? serializeSrt(sorted) : "");
-    await this.atomic(this.latestPointerPath(workspace.ownerProjectId), JSON.stringify({ id: workspace.id }));
+    let written = 0;
+    try {
+      for (const [file, contents] of files) {
+        await this.atomic(file, contents);
+        written += 1;
+      }
+    } catch (error) {
+      const rollbacks = files.slice(0, written).map(async ([file], index) => {
+        const contents = previous[index];
+        if (contents === undefined) await rm(file, { force: true });
+        else await this.atomic(file, contents);
+      });
+      const results = await Promise.allSettled(rollbacks);
+      const failures = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+      if (failures.length) throw new AggregateError([error, ...failures], "字幕存檔失敗，部分草稿檔案無法還原。");
+      throw error;
+    }
     workspace.previewUrl = authorizeSubtitleVideo(workspace.videoPath);
     return structuredClone(workspace);
   }

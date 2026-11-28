@@ -225,6 +225,7 @@ export function ConcatRenderModal({
   });
   const [youtubeHandoffMode, setYoutubeHandoffMode] = useState<YoutubeHandoffMode>("CHROME_DRAG_DROP");
   const [output, setOutput] = useState<OutputSelection>();
+  const outputRevision = useRef(0);
   const [renderEstimate, setRenderEstimate] = useState<ConcatRenderEstimate>();
   const [estimateBusy, setEstimateBusy] = useState(false);
   const [estimateError, setEstimateError] = useState<string>();
@@ -401,11 +402,14 @@ export function ConcatRenderModal({
   }, [remotePreparationFingerprint, remotePreparedFingerprint]);
 
   const prepareAutomaticOutput = async (preserveExistingError = false) => {
+    const revision = ++outputRevision.current;
     if (!preserveExistingError) setError(undefined);
     try {
-      setOutput(await window.sourceApp.prepareConcatOutput(suggestedFileName(purpose)));
+      const prepared = await window.sourceApp.prepareConcatOutput(suggestedFileName(purpose));
+      if (revision === outputRevision.current) setOutput(prepared);
     } catch (reason) {
-      if (!preserveExistingError) setError(reason instanceof Error ? reason.message : String(reason));
+      if (revision === outputRevision.current && !preserveExistingError)
+        setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
 
@@ -707,6 +711,7 @@ export function ConcatRenderModal({
 
   useEffect(() => {
     if (!output || totalEstimatedDurationMs === undefined || !window.sourceApp.estimateConcatRender) {
+      setEstimateBusy(false);
       setRenderEstimate(undefined);
       setEstimateError(undefined);
       return;
@@ -874,7 +879,10 @@ export function ConcatRenderModal({
     setError(undefined);
     try {
       const selected = await window.sourceApp.chooseConcatOutput(suggestedFileName(purpose));
-      if (selected) setOutput(selected);
+      if (selected) {
+        outputRevision.current += 1;
+        setOutput(selected);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }

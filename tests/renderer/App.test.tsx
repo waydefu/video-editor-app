@@ -806,7 +806,7 @@ describe("App source workflow", () => {
 
   it("changes text and overall UI zoom from Settings, supports Ctrl shortcuts, and restores both", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: /把素材放進來/ });
+    await screen.findByRole("heading", { level: 1, name: project.name });
     expect(document.documentElement).toHaveStyle({ fontSize: "18px" });
 
     fireEvent.click(screen.getByRole("button", { name: "Aa 設定" }));
@@ -829,7 +829,7 @@ describe("App source workflow", () => {
 
     cleanup();
     render(<App />);
-    await screen.findByRole("heading", { name: /把素材放進來/ });
+    await screen.findByRole("heading", { level: 1, name: project.name });
     expect(document.documentElement).toHaveStyle({ fontSize: "20px" });
     expect(document.documentElement).toHaveStyle({ zoom: "1.1" });
   });
@@ -1581,6 +1581,12 @@ describe("App source workflow", () => {
 
   it("offers a safe unlisted YouTube upload after Main preview completion", async () => {
     const api = mockApi();
+    type AutomaticOutput = Awaited<ReturnType<typeof api.prepareConcatOutput>>;
+    let resolveAutomaticOutput!: (output: AutomaticOutput) => void;
+    const automaticOutput = new Promise<AutomaticOutput>((resolve) => {
+      resolveAutomaticOutput = resolve;
+    });
+    vi.mocked(api.prepareConcatOutput).mockReturnValue(automaticOutput);
     vi.mocked(api.getYoutubeSettings).mockResolvedValue({
       schemaVersion: 1,
       preferredBrowser: "CHROME",
@@ -1598,9 +1604,18 @@ describe("App source workflow", () => {
     Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /產出串連預覽/ }));
-    fireEvent.click(screen.getByRole("button", { name: /選擇儲存位置/ }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "OK，開始產出" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "OK，開始產出" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /選擇儲存位置/ })));
+    await act(async () => {
+      resolveAutomaticOutput({
+        token: "automatic-output-token",
+        displayPath: "C:\\Output\\auto-preview.mp4",
+        automatic: true,
+      });
+    });
+    const startRender = screen.getByRole("button", { name: "OK，開始產出" });
+    await waitFor(() => expect(startRender).toBeEnabled());
+    await act(async () => fireEvent.click(startRender));
+    expect(api.startConcatRender).toHaveBeenCalledWith(expect.objectContaining({ outputToken: "output-token" }));
     fireEvent.click(await screen.findByRole("button", { name: "上傳 YouTube 預覽" }));
     const upload = await screen.findByRole("dialog", { name: "上傳正片預覽到 YouTube" });
     expect(within(upload).getByRole("radio", { name: /不公開（預設）/ })).toBeChecked();

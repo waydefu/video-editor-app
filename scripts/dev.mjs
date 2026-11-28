@@ -1,56 +1,52 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
 
 const require = createRequire(import.meta.url);
-// Vite 8's "exports" no longer exposes bin/vite.js, so resolve it from package.json's bin field.
-const vitePackageJson = require.resolve("vite/package.json");
-const viteBin = join(dirname(vitePackageJson), require(vitePackageJson).bin.vite);
-const electron = require("electron");
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
-const devUrl = "http://127.0.0.1:5173";
-
-const vite = spawn(process.execPath, [viteBin, "--host", "127.0.0.1"], {
+const typescriptPackage = require.resolve("typescript/package.json");
+const tscBin = join(dirname(typescriptPackage), require(typescriptPackage).bin.tsc);
+const compiler = spawn(process.execPath, [tscBin, "-p", "tsconfig.main.json"], {
   cwd: appRoot,
   stdio: "inherit",
   windowsHide: true,
 });
+const compilerExit = await new Promise((resolve, reject) => {
+  compiler.once("error", reject);
+  compiler.once("exit", (code) => resolve(code ?? 1));
+});
+if (compilerExit !== 0) process.exit(compilerExit);
 
-let electronProcess;
+const host = "127.0.0.1";
+const port = 5173;
+const vite = await createServer({ root: appRoot, server: { host, port, strictPort: true } });
+await vite.listen();
+vite.printUrls();
+
+const electronProcess = spawn(require("electron"), [appRoot], {
+  cwd: appRoot,
+  env: { ...process.env, VITE_DEV_SERVER_URL: `http://${host}:${port}` },
+  stdio: "inherit",
+});
+
 let stopping = false;
-
 async function stop(exitCode = 0) {
   if (stopping) return;
   stopping = true;
-  electronProcess?.kill();
-  vite.kill();
-  await delay(150);
-  process.exit(exitCode);
-}
-
-process.on("SIGINT", () => void stop(0));
-process.on("SIGTERM", () => void stop(0));
-vite.once("exit", (code) => {
-  if (!stopping) void stop(code ?? 1);
-});
-
-for (let attempt = 0; attempt < 80; attempt += 1) {
+  if (electronProcess.exitCode === null && electronProcess.signalCode === null) electronProcess.kill();
   try {
-    const response = await fetch(devUrl);
-    if (response.ok) break;
-  } catch {
-    // Vite is still starting.
+    await vite.close();
+  } finally {
+    process.exitCode = exitCode;
   }
-  if (attempt === 79) await stop(1);
-  await delay(250);
 }
 
-electronProcess = spawn(electron, [appRoot], {
-  cwd: appRoot,
-  env: { ...process.env, VITE_DEV_SERVER_URL: devUrl },
-  stdio: "inherit",
-  // No windowsHide here: on Windows it hides the app's first window, not just a console.
+process.on("SIGINT", () => void stop());
+process.on("SIGTERM", () => void stop());
+electronProcess.once("error", (error) => {
+  console.error(error);
+  void stop(1);
 });
-electronProcess.once("exit", (code) => void stop(code ?? 0));
+electronProcess.once("exit", (code) => void stop(code ?? 1));

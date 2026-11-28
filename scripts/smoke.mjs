@@ -42,11 +42,12 @@ clearTimeout(timeoutHandle);
 child.stdout.destroy();
 child.stderr.destroy();
 
+// On Windows, renderer descendants can briefly keep Chromium profile files open.
+await rm(smokeUserData, { recursive: true, force: true, maxRetries: 12, retryDelay: 100 });
+
 if (exitCode !== 0 || !output.includes("SMOKE_READY")) {
-  await rm(smokeUserData, { recursive: true, force: true });
   process.stderr.write(output);
   process.exit(Number(exitCode) || 1);
 }
 
-await rm(smokeUserData, { recursive: true, force: true });
 process.stdout.write("Electron smoke test: PASS\n");

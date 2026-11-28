@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import type { Ref, SyntheticEvent } from "react";
 import type {
   MaterialAnalysisProvider,
   ProjectManifest,
@@ -9,7 +9,12 @@ import type {
   SubtitleCue,
 } from "../../shared/domain";
 
+export interface StandaloneSubtitleDraftHandle {
+  save(): Promise<StandaloneSubtitleWorkspace | undefined>;
+}
 interface Props {
+  ref?: Ref<StandaloneSubtitleDraftHandle>;
+  onDraftStateChange?(state: { dirty: boolean; busy: boolean }): void;
   workspace: StandaloneSubtitleWorkspace;
   videoUrl?: string;
   onUpdated(workspace: StandaloneSubtitleWorkspace): void;
@@ -110,13 +115,24 @@ function AiEvidencePanel({
   );
 }
 
-export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onProjectUpdated, onError }: Props) {
+export function StandaloneSubtitleReview({
+  ref,
+  workspace,
+  videoUrl,
+  onUpdated,
+  onProjectUpdated,
+  onError,
+  onDraftStateChange,
+}: Props) {
   const [cues, setCues] = useState(workspace.cues);
   const [savedCues, setSavedCues] = useState(workspace.cues);
   const [selectedId, setSelectedId] = useState(workspace.cues[0]?.id);
   const [activeId, setActiveId] = useState<string>();
   const [frameUrl, setFrameUrl] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [writeError, setWriteError] = useState<string>();
+  const writeInProgress = useRef(false);
+  const editorRef = useRef<HTMLDivElement>(null);
   const [projectTimeMs, setProjectTimeMs] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -143,6 +159,7 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
   const manualScrollTimer = useRef<number | undefined>(undefined);
   const [followResumeRevision, setFollowResumeRevision] = useState(0);
   const dirty = useMemo(() => JSON.stringify(cues) !== JSON.stringify(savedCues), [cues, savedCues]);
+  useEffect(() => onDraftStateChange?.({ dirty, busy }), [dirty, busy, onDraftStateChange]);
   const selected = cues.find((cue) => cue.id === selectedId);
   const activeIndex = cues.findIndex((cue) => cue.id === activeId);
   const currentSegment = segments[Math.min(segmentIndex, segments.length - 1)];
@@ -216,15 +233,21 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.shiftKey) return;
+      const target = event.target instanceof Element ? event.target : undefined;
+      const review =
+        editorRef.current?.closest(".standalone-subtitle-review") ??
+        listRef.current?.closest(".standalone-subtitle-review");
+      if (target && target !== document.body && !review?.contains(target)) return;
       if (event.ctrlKey && event.key === "Enter") {
         event.preventDefault();
-        void save();
+        if (!event.repeat && dirty) void save();
         return;
       }
-      if (isTextEntryTarget(event.target)) return;
+      if (event.ctrlKey || event.metaKey || isTextEntryTarget(event.target)) return;
       const video = videoRef.current;
       if (!video) return;
-      if (event.code === "Space") {
+      if (event.code === "Space" && !target?.closest("button, summary, a[href], video, [role=button]")) {
         event.preventDefault();
         if (video.paused) void video.play();
         else video.pause();
@@ -277,22 +300,37 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
     [],
   );
 
-  const save = async (next = cues): Promise<StandaloneSubtitleWorkspace | undefined> => {
-    if (!window.sourceApp.saveStandaloneSubtitleWorkspace) return undefined;
+  const withWrite = async <T,>(operation: () => Promise<T>): Promise<T | undefined> => {
+    if (writeInProgress.current) return undefined;
+    writeInProgress.current = true;
     setBusy(true);
+    setWriteError(undefined);
     try {
-      const updated = await window.sourceApp.saveStandaloneSubtitleWorkspace(workspace.id, next);
-      setCues(updated.cues);
-      setSavedCues(updated.cues);
-      onUpdated(updated);
-      return updated;
+      return await operation();
     } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setWriteError(message);
+      onError(message);
       return undefined;
     } finally {
+      writeInProgress.current = false;
       setBusy(false);
     }
   };
+
+  const acceptSavedWorkspace = (updated: StandaloneSubtitleWorkspace, submitted: SubtitleCue[]) => {
+    setCues((current) => (current === submitted ? updated.cues : current));
+    setSavedCues(updated.cues);
+    onUpdated(updated);
+  };
+
+  const persist = async (next: SubtitleCue[]) => {
+    const updated = await window.sourceApp.saveStandaloneSubtitleWorkspace?.(workspace.id, next);
+    if (updated) acceptSavedWorkspace(updated, next);
+    return updated;
+  };
+  const save = (next = cues) => withWrite(() => persist(next));
+  useImperativeHandle(ref, () => ({ save: () => save() }));
 
   const seekProjectTime = useCallback(
     (timeMs: number) => {
@@ -363,29 +401,19 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
   };
 
   const exportSrt = async () => {
-    const api = window.sourceApp;
-    if (!api.chooseSubtitleOutput || !api.exportStandaloneSubtitleWorkspace) return;
-    setBusy(true);
-    try {
-      if (dirty && api.saveStandaloneSubtitleWorkspace) {
-        const updated = await api.saveStandaloneSubtitleWorkspace(workspace.id, cues);
-        setCues(updated.cues);
-        setSavedCues(updated.cues);
-        onUpdated(updated);
-      }
-      const output = await api.chooseSubtitleOutput(
+    const { chooseSubtitleOutput, exportStandaloneSubtitleWorkspace } = window.sourceApp;
+    if (!chooseSubtitleOutput || !exportStandaloneSubtitleWorkspace) return;
+    await withWrite(async () => {
+      if (dirty && !(await persist(cues))) return;
+      const output = await chooseSubtitleOutput(
         workspace.videoPath.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "") + ".srt",
       );
       if (!output) return;
-      const result = await api.exportStandaloneSubtitleWorkspace(workspace.id, output.token);
+      const result = await exportStandaloneSubtitleWorkspace(workspace.id, output.token);
       setExportNotice(
         result.backupPath ? `已匯出 SRT；原檔已先備份：${result.backupPath}` : `已匯出 SRT：${result.outputPath}`,
       );
-    } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
   const startAiCheck = async () => {
@@ -442,10 +470,13 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
   };
 
   const aiAction = async (proposal: SubtitleAiCheckProposal, action: "KEEP" | "APPLY" | "EDIT" | "SKIP") => {
-    if (!window.sourceApp.applySubtitleAiCheckAction) return;
-    try {
-      if ((action === "APPLY" || action === "EDIT") && dirty && !(await save(cues))) return;
-      const result = await window.sourceApp.applySubtitleAiCheckAction({
+    const apply = window.sourceApp.applySubtitleAiCheckAction;
+    if (!apply) return;
+    await withWrite(async () => {
+      const appliesChange = action === "APPLY" || action === "EDIT";
+      const submitted = appliesChange && dirty ? (await persist(cues))?.cues : cues;
+      if (!submitted) return;
+      const result = await apply({
         workspaceId: workspace.id,
         proposalId: proposal.id,
         action,
@@ -458,18 +489,14 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
           : {}),
       });
       setAiProposals((current) => current.map((item) => (item.id === proposal.id ? result.proposal : item)));
-      if (action === "APPLY" || action === "EDIT") {
-        setCues(result.workspace.cues);
-        setSavedCues(result.workspace.cues);
-        onUpdated(result.workspace);
+      if (appliesChange) {
+        acceptSavedWorkspace(result.workspace, submitted);
         if (result.project) onProjectUpdated?.(result.project);
       }
       if (result.conflict) onError("字幕在 AI 建議產生後已有較新的人工修改；已保留人工內容，未套用舊建議。");
       setEditingProposalId(undefined);
       setEditedProposal(undefined);
-    } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
-    }
+    });
   };
 
   const advanceSegment = (resume: boolean) => {
@@ -506,14 +533,7 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
     const cue = cues.find((item) => time >= item.startMs && time < item.endMs);
     if (cue?.id !== activeId) {
       setActiveId(cue?.id);
-      if (cue) setSelectedId(cue.id);
-    }
-  };
-
-  const onListKeyDown = (event: ReactKeyboardEvent<HTMLOListElement>) => {
-    if (event.key === "Enter" && event.ctrlKey) {
-      event.preventDefault();
-      void save();
+      if (cue && !editorRef.current?.contains(document.activeElement)) setSelectedId(cue.id);
     }
   };
 
@@ -537,23 +557,29 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
     <section className="standalone-subtitle-review" aria-label="獨立字幕審核">
       <header className="standalone-subtitle-review__header">
         <h2>獨立字幕審核</h2>
-        <span role="status">{dirty ? "尚未儲存" : "已儲存"}</span>
-        <button type="button" disabled={!dirty || busy} onClick={() => void save()}>
+        <span role="status">{busy ? "處理中…" : dirty ? "尚未儲存" : "已儲存"}</span>
+        <button className="primary-button" type="button" disabled={!dirty || busy} onClick={() => void save()}>
           儲存草稿
         </button>
-        <button type="button" disabled={busy} onClick={() => void exportSrt()}>
+        <button className="secondary-button" type="button" disabled={busy} onClick={() => void exportSrt()}>
           匯出 SRT
         </button>
       </header>
+      {writeError && (
+        <p role="alert" className="notice error">
+          {writeError}
+        </p>
+      )}
       {exportNotice && <p role="status">{exportNotice}</p>}
       <div className="standalone-subtitle-review__workspace">
         <div className="standalone-subtitle-review__left">
           {selected && (
-            <div className="standalone-subtitle-review__editor" aria-label="編輯選取字幕">
+            <div ref={editorRef} className="standalone-subtitle-review__editor" aria-label="編輯選取字幕">
               <label>
                 文字
                 <textarea
                   aria-label="字幕文字"
+                  disabled={busy}
                   value={selected.text}
                   onChange={(event) => update(selected.id, { text: event.target.value })}
                 />
@@ -562,6 +588,7 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
                 開始（毫秒）
                 <input
                   aria-label="開始時間"
+                  disabled={busy}
                   type="number"
                   value={selected.startMs}
                   onChange={(event) => update(selected.id, { startMs: Number(event.target.value) })}
@@ -571,6 +598,7 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
                 結束（毫秒）
                 <input
                   aria-label="結束時間"
+                  disabled={busy}
                   type="number"
                   value={selected.endMs}
                   onChange={(event) => update(selected.id, { endMs: Number(event.target.value) })}
@@ -579,14 +607,14 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
               <button
                 type="button"
                 onClick={mergeNext}
-                disabled={!cues[cues.findIndex((cue) => cue.id === selected.id) + 1]}
+                disabled={busy || !cues[cues.findIndex((cue) => cue.id === selected.id) + 1]}
               >
                 與下一筆合併
               </button>
-              <button type="button" onClick={split} disabled={selected.endMs - selected.startMs < 2}>
+              <button type="button" onClick={split} disabled={busy || selected.endMs - selected.startMs < 2}>
                 從中點拆分
               </button>
-              <button type="button" onClick={() => remove(selected.id)}>
+              <button type="button" disabled={busy} onClick={() => remove(selected.id)}>
                 刪除字幕
               </button>
             </div>
@@ -595,7 +623,6 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
             ref={listRef}
             className="standalone-subtitle-review__list"
             aria-label="字幕 cue 清單"
-            onKeyDown={onListKeyDown}
             onWheel={() => {
               manualScrollUntil.current = Date.now() + 4000;
               if (manualScrollTimer.current !== undefined) window.clearTimeout(manualScrollTimer.current);
@@ -645,7 +672,12 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
                   <span>{cue.text}</span>
                   {cue.aiConfidence !== undefined && <span>{cue.aiConfidence}%</span>}
                 </button>
-                <button type="button" aria-label={`刪除第 ${index + 1} 筆`} onClick={() => remove(cue.id)}>
+                <button
+                  type="button"
+                  aria-label={`刪除第 ${index + 1} 筆`}
+                  disabled={busy}
+                  onClick={() => remove(cue.id)}
+                >
                   刪除
                 </button>
               </li>
@@ -790,7 +822,7 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
           <div className="standalone-subtitle-review__ai-actions">
             <button
               type="button"
-              disabled={!aiEnabled || aiProgress?.status === "RUNNING"}
+              disabled={busy || !aiEnabled || aiProgress?.status === "RUNNING"}
               onClick={() => void startAiCheck()}
             >
               開始
@@ -798,7 +830,11 @@ export function StandaloneSubtitleReview({ workspace, videoUrl, onUpdated, onPro
             <button type="button" disabled={aiProgress?.status !== "RUNNING"} onClick={() => void pauseAiCheck()}>
               暫停
             </button>
-            <button type="button" disabled={aiProgress?.status !== "PAUSED"} onClick={() => void resumeAiCheck()}>
+            <button
+              type="button"
+              disabled={busy || aiProgress?.status !== "PAUSED"}
+              onClick={() => void resumeAiCheck()}
+            >
               繼續
             </button>
             <button

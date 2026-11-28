@@ -198,6 +198,8 @@ describe("StandaloneSubtitleReview", () => {
     Object.defineProperty(player, "play", { configurable: true, value: play });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "字幕文字" }), { code: "Space", key: " " });
     expect(play).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("button", { name: "前進兩秒" }), { code: "Space", key: " " });
+    expect(play).not.toHaveBeenCalled();
     fireEvent.keyDown(document.body, { code: "Space", key: " " });
     expect(play).toHaveBeenCalledOnce();
     fireEvent.change(screen.getByRole("spinbutton", { name: "開始時間" }), { target: { value: "1234" } });
@@ -206,6 +208,25 @@ describe("StandaloneSubtitleReview", () => {
     expect(player.currentTime).toBe(2.5);
     fireEvent.keyDown(document.body, { key: "ArrowLeft" });
     expect(player.currentTime).toBe(0.5);
+  });
+
+  it("keeps the active editor on its cue during playback", () => {
+    setup();
+    const editor = screen.getByRole("textbox", { name: "字幕文字" });
+    editor.focus();
+    timeUpdate(2600);
+    expect(editor).toHaveValue("第一句");
+    expect(document.querySelector(".standalone-subtitle-review__overlay")).toHaveTextContent("第二句");
+  });
+
+  it("submits Ctrl+Enter from the cue list once", async () => {
+    const { saveStandaloneSubtitleWorkspace } = setup();
+    fireEvent.change(screen.getByRole("textbox", { name: "字幕文字" }), { target: { value: "已修改" } });
+    const cue = screen.getByRole("button", { name: /選取第 1 筆/ });
+    fireEvent.keyDown(cue, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(cue, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: "儲存草稿" })).toBeDisabled());
+    expect(saveStandaloneSubtitleWorkspace).toHaveBeenCalledOnce();
   });
 
   it("saves without moving the playhead and applies the playback rate", async () => {

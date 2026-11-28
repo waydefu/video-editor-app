@@ -1427,9 +1427,9 @@ export class ProjectStore {
       project.sourceAudioVolumePercent = validatePercent(volumePercent, "素材原音音量");
     });
   }
-  async setSubtitleCues(cues: SubtitleCue[]): Promise<ProjectManifest> {
+  async setSubtitleCues(cues: SubtitleCue[] | ((project: ProjectManifest) => SubtitleCue[])): Promise<ProjectManifest> {
     return this.mutate((project) => {
-      const normalized = validateSubtitleCues(cues);
+      const normalized = validateSubtitleCues(typeof cues === "function" ? cues(project) : cues);
       const mainDurationMs = buildTimelinePlan(project).durationMs;
       const introDurationMs = buildTimelinePlan({ ...project, timelineOrder: [] }, { includeIntro: true }).durationMs;
       if (
