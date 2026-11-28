@@ -1271,6 +1271,12 @@ export interface ImageDurationUpdateResult {
   project: ProjectManifest;
 }
 
+/** A freshly created project has no project file until the user saves it. */
+export interface NewProjectResult {
+  project: ProjectManifest;
+  filePath?: undefined;
+}
+
 export interface ProjectFileResult {
   project: ProjectManifest;
   filePath: string;
@@ -2354,6 +2360,7 @@ export interface AppApi {
   saveProject(): Promise<ProjectFileResult>;
   saveProjectAs(): Promise<ProjectFileResult | null>;
   openProject(): Promise<ProjectFileResult | null>;
+  newProject(): Promise<NewProjectResult>;
   removeMainAsset(assetId: string): Promise<ProjectManifest>;
   restoreMainAsset(assetId: string): Promise<ProjectManifest>;
   setIntroSegments(segments: IntroSuggestion[]): Promise<ProjectManifest>;

@@ -758,6 +758,15 @@ export function registerIpc(
       projectSwitchInProgress = false;
     }
   });
+  ipcMain.handle("project:new", async () => {
+    assertNoRunningProjectJobs();
+    projectSwitchInProgress = true;
+    try {
+      return await store.newProject();
+    } finally {
+      projectSwitchInProgress = false;
+    }
+  });
   ipcMain.handle("project:open", async (event) => {
     assertNoRunningProjectJobs();
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;

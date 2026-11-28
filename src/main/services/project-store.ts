@@ -39,6 +39,7 @@ import {
   type ProjectChangeSection,
   type ProjectChangedEvent,
   type ProjectColorSettings,
+  type NewProjectResult,
   type ProjectFileResult,
   type ProjectFileState,
   type ProjectHistoryState,
@@ -690,6 +691,34 @@ export class ProjectStore {
       return this.getProject();
     });
     return { project, filePath: resolved };
+  }
+
+  /**
+   * Starts a brand-new empty project. The previously opened project file is never written:
+   * the new project only lives in the internal manifest until the user chooses "save as".
+   */
+  async newProject(): Promise<NewProjectResult> {
+    const project = await this.queueProjectFileOperation(async () => {
+      const next = createProject();
+      await this.writeProjectFile(this.manifestPath, next);
+      // An empty session pointer is ignored by initialize(), so a restart will not reopen the old file.
+      await this.writeJsonFile(this.sessionPath, {});
+      const previous = this.getProject();
+      this.current = next;
+      this.activeProjectPath = undefined;
+      this.clearHistory();
+      this.emitChanged(previous, next, [
+        "SOURCES",
+        "MAIN_TIMELINE",
+        "INTRO_TIMELINE",
+        "BGM",
+        "SUBTITLES",
+        "AI_CONTEXT",
+        "SETTINGS",
+      ]);
+      return this.getProject();
+    });
+    return { project, filePath: undefined };
   }
 
   async openProject(filePath: string): Promise<ProjectFileResult> {

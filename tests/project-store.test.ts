@@ -236,6 +236,40 @@ describe("ProjectStore", () => {
     expect(JSON.parse(await readFile(firstPath, "utf8")).id).toBe(first.project.id);
   });
 
+  it("starts a new empty project without touching the previously opened project file", async () => {
+    const root = await tempRoot();
+    const sourcePath = path.join(root, "source.mp4");
+    await writeFile(sourcePath, "read-only-original");
+    const dataRoot = path.join(root, "data");
+    const store = new ProjectStore(dataRoot);
+    await store.initialize();
+    await store.addAssets([asset(sourcePath)]);
+    const projectPath = path.join(root, "saved.swproj");
+    const saved = await store.saveProjectAs(projectPath, "saved");
+    await store.setSortMode("FILE_NAME");
+    expect(store.getHistoryState().canUndo).toBe(true);
+    const bytesBefore = await readFile(projectPath);
+
+    const created = await store.newProject();
+    expect(created.filePath).toBeUndefined();
+    expect(created.project.id).not.toBe(saved.project.id);
+    expect(created.project.sources).toHaveLength(0);
+    expect(created.project.name).toBe("我的素材專案");
+    expect(store.getProjectFileState().filePath).toBeUndefined();
+    expect(store.getHistoryState()).toMatchObject({ canUndo: false, canRedo: false });
+    expect((await readFile(projectPath)).equals(bytesBefore)).toBe(true);
+
+    // Further edits autosave only to the internal manifest, not to the old file.
+    await store.setSortMode("FILE_NAME");
+    expect((await readFile(projectPath)).equals(bytesBefore)).toBe(true);
+
+    const restarted = new ProjectStore(dataRoot);
+    await restarted.initialize();
+    expect(restarted.getProjectFileState().filePath).toBeUndefined();
+    expect(restarted.getProject().id).toBe(created.project.id);
+    expect(await readFile(sourcePath, "utf8")).toBe("read-only-original");
+  });
+
   it("opens an explicitly selected old project and leaves the current project unchanged when the file is invalid", async () => {
     const root = await tempRoot();
     const store = new ProjectStore(path.join(root, "app-data"));

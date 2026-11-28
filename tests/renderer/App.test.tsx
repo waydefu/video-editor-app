@@ -251,6 +251,9 @@ function mockApi(initialProject: ProjectManifest = project): AppApi {
       filePath: "C:\\專案\\測試專案.swproj",
     })),
     openProject: vi.fn(async () => null),
+    newProject: vi.fn(async () => ({
+      project: { ...structuredClone(initialProject), id: "new-project", name: "我的素材專案", sources: [] },
+    })),
     chooseFiles: vi.fn(),
     chooseFolder: vi.fn(),
     chooseIntroFiles: vi.fn(async () => ({
@@ -1162,6 +1165,67 @@ describe("App source workflow", () => {
     await waitFor(() => expect(api.openProject).toHaveBeenCalledTimes(1));
     expect(await screen.findByText(/已開啟專案「舊河內專案」/)).toBeInTheDocument();
     expect(screen.getByText(/專案：舊河內專案/)).toBeInTheDocument();
+  });
+
+  it("lists 新增專案 first in the File menu and asks before discarding an unsaved project with content", async () => {
+    const api = mockApi();
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "檔案 ▾" }));
+    expect(screen.getAllByRole("menuitem")[0]).toHaveTextContent("新增專案");
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "新增專案" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByRole("button", { name: "取消" })).toHaveFocus();
+    expect(api.newProject).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(api.newProject).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "檔案 ▾" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "新增專案" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "捨棄並新增" }));
+    await waitFor(() => expect(api.newProject).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/已建立新專案/)).toBeInTheDocument();
+    expect(screen.getByText(/專案：我的素材專案/)).toBeInTheDocument();
+  });
+
+  it("saves first and then creates a new project from the confirmation dialog", async () => {
+    const api = mockApi();
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "檔案 ▾" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "新增專案" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "先另存專案…" }));
+    await waitFor(() => expect(api.saveProjectAs).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.newProject).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not create a new project when 先另存專案 is cancelled", async () => {
+    const api = mockApi();
+    vi.mocked(api.saveProjectAs).mockResolvedValue(null);
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "檔案 ▾" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "新增專案" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "先另存專案…" }));
+    await waitFor(() => expect(api.saveProjectAs).toHaveBeenCalledTimes(1));
+    expect(api.newProject).not.toHaveBeenCalled();
+  });
+
+  it("creates a new project immediately when the current project already has a file", async () => {
+    const api = mockApi();
+    vi.mocked(api.getProjectFileState).mockResolvedValue({ filePath: "C:\\專案\\已存.swproj" });
+    Object.defineProperty(window, "sourceApp", { configurable: true, value: api });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "檔案 ▾" }));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "儲存專案" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("menuitem", { name: "新增專案" }));
+    await waitFor(() => expect(api.newProject).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(await screen.findByText(/已建立新專案/)).toBeInTheDocument();
   });
 
   it("shows read-only status, metadata and opens a playable overall preview", async () => {

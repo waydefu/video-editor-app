@@ -149,6 +149,7 @@ export function App() {
   const [removeBusy, setRemoveBusy] = useState(false);
   const [lastRemovedMainId, setLastRemovedMainId] = useState<string>();
   const [showFileMenu, setShowFileMenu] = useState(false);
+  const [showNewProjectConfirm, setShowNewProjectConfirm] = useState(false);
   const [projectFilePath, setProjectFilePath] = useState<string>();
   const [projectFileBusy, setProjectFileBusy] = useState(false);
   const [saveState, setSaveState] = useState<"SAVED" | "SAVING" | "ERROR">("SAVED");
@@ -484,25 +485,69 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [historyState, runHistory]);
 
-  const saveProjectFile = async (saveAs: boolean) => {
+  /** Resolves true only when a project file was actually written (false on cancel or error). */
+  const saveProjectFile = async (saveAs: boolean): Promise<boolean> => {
     setProjectFileBusy(true);
     setSaveState("SAVING");
     setError(undefined);
     setShowFileMenu(false);
     try {
       const result = saveAs ? await window.sourceApp.saveProjectAs() : await window.sourceApp.saveProject();
-      if (!result) return;
+      if (!result) {
+        setSaveState("SAVED");
+        return false;
+      }
       setProject(result.project);
       setProjectFilePath(result.filePath);
       setSaveState("SAVED");
       setSavedAt(result.project.updatedAt);
       setNotice(`專案「${result.project.name}」已安全儲存。來源媒體與 cache 未複製或修改。`);
+      return true;
     } catch (reason) {
       setSaveState("ERROR");
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return false;
+    } finally {
+      setProjectFileBusy(false);
+    }
+  };
+
+  const projectHasContent = (value: ProjectManifest) =>
+    value.sources.length > 0 ||
+    value.introSegments.length > 0 ||
+    value.subtitleCues.length > 0 ||
+    value.bgmTracks.length > 0 ||
+    value.mediaInsertions.length > 0;
+
+  const createNewProject = async () => {
+    setProjectFileBusy(true);
+    setError(undefined);
+    setShowFileMenu(false);
+    setShowNewProjectConfirm(false);
+    try {
+      const result = await window.sourceApp.newProject();
+      closeProjectViews();
+      setProject(result.project);
+      setProjectFilePath(undefined);
+      setSaveState("SAVED");
+      setSavedAt(result.project.updatedAt);
+      setNotice("已建立新專案。完成後請用「另存專案…」命名儲存；原專案檔未變更。");
+    } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setProjectFileBusy(false);
     }
+  };
+
+  const requestNewProject = () => {
+    setShowFileMenu(false);
+    if (!projectFilePath && project && projectHasContent(project)) setShowNewProjectConfirm(true);
+    else void createNewProject();
+  };
+
+  const saveThenCreateNewProject = async () => {
+    setShowNewProjectConfirm(false);
+    if (await saveProjectFile(true)) await createNewProject();
   };
 
   const openProjectFile = async () => {
@@ -753,6 +798,9 @@ export function App() {
                   <strong>{project.name}</strong>
                   <small title={projectFilePath}>{projectFilePath ?? "尚未另存為專案檔"}</small>
                 </div>
+                <button role="menuitem" type="button" onClick={requestNewProject}>
+                  新增專案
+                </button>
                 <button
                   role="menuitem"
                   type="button"
@@ -1410,6 +1458,53 @@ export function App() {
           onCancel={() => setConfirmRemoveAsset(undefined)}
           onConfirm={() => void removeAsset(confirmRemoveAsset)}
         />
+      )}
+      {showNewProjectConfirm && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="confirm-remove-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirm-new-project-title"
+            aria-describedby="confirm-new-project-description"
+          >
+            <header>
+              <span className="eyebrow">NEW PROJECT</span>
+              <h2 id="confirm-new-project-title">要捨棄目前尚未儲存的專案嗎？</h2>
+            </header>
+            <div id="confirm-new-project-description">
+              <p>
+                <strong>目前專案還沒有另存成專案檔，新增專案後這份內容將被捨棄。</strong>
+              </p>
+              <p>建議先使用「另存專案…」保留目前的編輯內容。來源影片與照片不會被刪除或修改。</p>
+            </div>
+            <footer>
+              <SafeDefaultButton
+                className="secondary-button"
+                type="button"
+                onClick={() => setShowNewProjectConfirm(false)}
+              >
+                取消
+              </SafeDefaultButton>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={projectFileBusy}
+                onClick={() => void saveThenCreateNewProject()}
+              >
+                先另存專案…
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={projectFileBusy}
+                onClick={() => void createNewProject()}
+              >
+                捨棄並新增
+              </button>
+            </footer>
+          </section>
+        </div>
       )}
       {mediaInsertionVideo && (
         <MediaInsertionModal

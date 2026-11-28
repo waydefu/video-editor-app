@@ -129,6 +129,7 @@ const api: AppApi & {
   saveProject: () => ipcRenderer.invoke("project:save"),
   saveProjectAs: () => ipcRenderer.invoke("project:save-as"),
   openProject: () => ipcRenderer.invoke("project:open"),
+  newProject: () => ipcRenderer.invoke("project:new"),
   removeMainAsset: (assetId: string) => ipcRenderer.invoke("main:remove-asset", assetId),
   restoreMainAsset: (assetId: string) => ipcRenderer.invoke("main:restore-asset", assetId),
   setIntroSegments: (segments: IntroSuggestion[]) => ipcRenderer.invoke("intro:set-segments", segments),
