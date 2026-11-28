@@ -1,3 +1,4 @@
+import { request as httpRequest, type ClientRequest, type IncomingMessage } from "node:http";
 import { Script } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConcatRenderRequest } from "../src/shared/domain";
@@ -217,5 +218,59 @@ describe("RemoteControlServer", () => {
       projectName: "Reconnected Project",
     });
     expect(state.snapshot().state).toBe("IDLE");
+  });
+
+  it("R2-01: an authenticated command whose body completes after stop is rejected before dispatch", async () => {
+    const state = new RenderCommandState("LAN Project");
+    const startPrepared = vi.fn(async () => undefined);
+    state.setHandlers({ startPrepared, resumeCheckpoint: vi.fn(), cancel: vi.fn() });
+    state.prepare(
+      {
+        outputToken: "x",
+        orderedAssetIds: ["a".repeat(64)],
+        transitionSeconds: 0.3,
+        resolution: "1080P",
+      } as ConcatRenderRequest,
+      "out.mp4",
+    );
+    const server = new RemoteControlServer(state);
+    const auth = await paired(server);
+    const authenticate = vi.spyOn(
+      server as unknown as { authenticate: (request: IncomingMessage) => unknown },
+      "authenticate",
+    );
+    const url = new URL(auth.origin);
+    let clientRequest!: ClientRequest;
+    const responded = new Promise<number | undefined>((resolve, reject) => {
+      clientRequest = httpRequest(
+        {
+          hostname: url.hostname,
+          port: url.port,
+          path: "/api/command/start",
+          method: "POST",
+          agent: false,
+          headers: {
+            Cookie: auth.cookie,
+            Origin: auth.origin,
+            "X-Scenery-CSRF": auth.csrf,
+            "Content-Type": "application/json",
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve(response.statusCode));
+        },
+      );
+      clientRequest.on("error", reject);
+    });
+    // Headers and the first body chunk arrive; the server has authenticated and awaits the rest of the body.
+    clientRequest.write("{");
+    await vi.waitFor(() => expect(authenticate).toHaveBeenCalled());
+    const stopping = server.stop();
+    clientRequest.end("}");
+    expect(await responded).toBe(401);
+    await stopping;
+    expect(startPrepared).not.toHaveBeenCalled();
+    expect(state.snapshot().state).toBe("PREPARED");
   });
 });

@@ -18,6 +18,7 @@ interface PairingSecret {
 }
 
 interface SessionRecord {
+  key: string;
   expiresAt: number;
   lastSeenAt: number;
   remoteAddress: string;
@@ -115,6 +116,8 @@ export class RemoteControlServer {
   private readonly clients = new Map<ServerResponse, SessionRecord>();
   private readonly rates = new Map<string, RateRecord>();
   private readonly pairingRates = new Map<string, RateRecord>();
+  // Bumped by every stop; a request admitted under an older generation must not dispatch commands.
+  private generation = 0;
   private unsubscribe?: () => void;
   private statusListener?: (status: RemoteControlStatus) => void;
 
@@ -157,6 +160,7 @@ export class RemoteControlServer {
   }
 
   async stop(): Promise<RemoteControlStatus> {
+    this.generation += 1;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     for (const client of this.clients.keys()) client.end();
@@ -249,6 +253,18 @@ export class RemoteControlServer {
     return session.expiresAt > now && now - session.lastSeenAt <= SESSION_IDLE_MS;
   }
 
+  // Run after an awaited body and right before dispatch: the admission checked earlier may have been revoked since.
+  private stillAuthorized(request: IncomingMessage, session: SessionRecord, generation: number): boolean {
+    return (
+      generation === this.generation &&
+      this.sessions.get(session.key) === session &&
+      this.sessionValid(session) &&
+      session.remoteAddress === normalizeAddress(request.socket.remoteAddress) &&
+      this.allowedHost(request) &&
+      this.allowedOrigin(request)
+    );
+  }
+
   private authenticate(request: IncomingMessage): SessionRecord | undefined {
     const match = /(?:^|;\s*)scenery_remote=([A-Za-z0-9_-]{40,})(?:;|$)/.exec(request.headers.cookie ?? "");
     if (!match) return undefined;
@@ -267,6 +283,7 @@ export class RemoteControlServer {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const generation = this.generation;
     try {
       if (
         !isPrivateLanAddress(request.socket.remoteAddress) ||
@@ -308,6 +325,7 @@ export class RemoteControlServer {
         const sessionToken = token(36);
         const csrfToken = token(24);
         this.sessions.set(hash(sessionToken), {
+          key: hash(sessionToken),
           expiresAt: Date.now() + SESSION_TTL_MS,
           lastSeenAt: Date.now(),
           remoteAddress: normalizeAddress(request.socket.remoteAddress),
@@ -353,6 +371,10 @@ export class RemoteControlServer {
       }
       if (request.method === "POST" && url.pathname === "/api/command/cancel-intent") {
         await readJsonBody(request);
+        if (!this.stillAuthorized(request, authenticatedSession, generation)) {
+          json(response, 401, { error: "遠端控制授權已失效，請重新掃描 QR Code。" });
+          return;
+        }
         if (!["RUNNING", "PAUSING", "PAUSED"].includes(this.renderState.snapshot().state)) {
           json(response, 409, { error: "目前沒有可取消的轉檔工作。" });
           return;
@@ -371,6 +393,10 @@ export class RemoteControlServer {
         request.method === "POST" ? /^\/api\/command\/(start|pause|resume|cancel)$/.exec(url.pathname)?.[1] : undefined;
       if (command) {
         const body = await readJsonBody(request);
+        if (!this.stillAuthorized(request, authenticatedSession, generation)) {
+          json(response, 401, { error: "遠端控制授權已失效，請重新掃描 QR Code。" });
+          return;
+        }
         if (
           command === "cancel" &&
           (body.confirmation !== "CANCEL" ||
