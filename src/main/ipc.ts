@@ -2976,7 +2976,8 @@ export function registerIpc(
   ipcMain.handle("youtube:disconnect", () => youtubeUpload.disconnect());
   ipcMain.handle("youtube:upload", async (event, request: YoutubeUploadRequest) => {
     if (youtubeUploadController) throw new Error("已有 YouTube 上傳正在進行中。");
-    const output = request && typeof request.jobId === "string" ? await outputHistory.get(request.jobId) : undefined;
+    const output =
+      request && typeof request.jobId === "string" ? await outputHistory.getForUpload(request.jobId) : undefined;
     if (!output || output.purpose === "CLIP")
       throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
     postSuccessPower.cancel("偵測到新的 YouTube 上傳；已取消先前排定的電源動作。");
@@ -3031,13 +3032,13 @@ export function registerIpc(
   });
   ipcMain.handle("youtube:open-video", (_event, videoId: string) => youtubeUpload.openVideo(videoId));
   ipcMain.handle("youtube:prepare-chrome-handoff", async (_event, jobId: string) => {
-    const output = typeof jobId === "string" ? await outputHistory.get(jobId) : undefined;
+    const output = typeof jobId === "string" ? await outputHistory.getForUpload(jobId) : undefined;
     if (!output || output.purpose === "CLIP")
       throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
     return platformUploadHandoff.openYoutubeChrome(output.outputPath);
   });
   ipcMain.handle("platform-upload:open", async (_event, jobId: string, platform: BrowserUploadPlatform) => {
-    const output = typeof jobId === "string" ? await outputHistory.get(jobId) : undefined;
+    const output = typeof jobId === "string" ? await outputHistory.getForUpload(jobId) : undefined;
     if (!output || output.purpose === "INTRO" || output.purpose === "CLIP")
       throw new Error("片頭／單一時間段預覽不可直接當正片投稿；請選擇正片或已確認的既有 MP4。");
     return platformUploadHandoff.open(output.outputPath, platform);

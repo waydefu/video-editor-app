@@ -9,6 +9,13 @@ interface Props {
   onOpenYoutubeSettings(): void;
 }
 
+function identityLabel(output: PreviewOutputRecord): { text: string; tone: "ready" | "offline" } | undefined {
+  if (output.identityState === "CHANGED") return { text: "⚠ 檔案已變更，需重新確認", tone: "offline" };
+  if (output.identityState === "UNVERIFIED") return { text: "⚠ 需確認：舊紀錄沒有檔案身分資料", tone: "offline" };
+  if (output.identityState === "VERIFIED" && output.exists) return { text: "✓ 已核對與登錄時相同", tone: "ready" };
+  return undefined;
+}
+
 function purposeLabel(output: PreviewOutputRecord): string {
   if (output.purpose === "INTRO") return "片頭預覽";
   if (output.purpose === "CLIP") return "4K 時間段";
@@ -126,6 +133,9 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
             <div className="output-history-list">
               {outputs.map((output) => {
                 const canPublish = output.purpose !== "INTRO" && output.purpose !== "CLIP";
+                // Upload buttons only appear for fully verified files; the main process enforces the same rule.
+                const uploadReady = output.identityState === "VERIFIED";
+                const identity = identityLabel(output);
                 return (
                   <article key={output.jobId} className={!output.exists ? "is-offline" : ""}>
                     <header>
@@ -137,6 +147,23 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
                         {output.exists ? "✓ 檔案可用" : "檔案已移動／離線"}
                       </span>
                     </header>
+                    {identity && (
+                      <p className={identity.tone === "ready" ? "history-file-ready" : "history-file-offline"}>
+                        {identity.text}
+                      </p>
+                    )}
+                    {output.identityState === "CHANGED" && (
+                      <p className="source-path">
+                        此檔案的大小、修改時間或內容與登錄時不同，可能已被替換；紀錄中的專案與時長不再代表此檔。已停用上傳與投稿。請移除紀錄後，用「加入以前的
+                        MP4」重新選擇此檔以確認。
+                      </p>
+                    )}
+                    {output.identityState === "UNVERIFIED" && (
+                      <p className="source-path">
+                        此紀錄由舊版 App
+                        建立，尚未核對檔案身分。可播放與找出檔案，但已停用上傳與投稿；移除紀錄後重新加入此檔即可確認。
+                      </p>
+                    )}
                     <p className="source-path" title={output.outputPath}>
                       {output.outputPath}
                     </p>
@@ -171,7 +198,7 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
                     </dl>
                     <OutputRecordActions
                       output={output}
-                      showPublish={canPublish}
+                      showPublish={canPublish && uploadReady}
                       onError={setError}
                       onCopySuccess={() => setNotice("已複製完整檔案路徑。")}
                       onYoutube={() => void youtubeChromeHandoff(output)}

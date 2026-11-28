@@ -1996,6 +1996,13 @@ export interface AudioPreviewResult {
   meter: AudioMeterReading;
 }
 
+/**
+ * Whether the file on disk still matches the identity recorded when the output was registered.
+ * VERIFIED: size, mtime and content fingerprint match. CHANGED: replaced or modified since registration.
+ * UNVERIFIED: legacy entry with no identity evidence. MISSING: file absent or empty.
+ */
+export type PreviewOutputIdentityState = "VERIFIED" | "CHANGED" | "UNVERIFIED" | "MISSING";
+
 export interface PreviewOutputRecord {
   jobId: string;
   /** Project identity captured when the render completed. Legacy/imported records may not have one. */
@@ -2015,6 +2022,8 @@ export interface PreviewOutputRecord {
   includedIntroSegmentCount?: number;
   projectName?: string;
   exists: boolean;
+  /** Optional for compatibility with older payloads; the current main process always sets it. */
+  identityState?: PreviewOutputIdentityState;
   aspectRatio?: "PORTRAIT_9_16" | "LANDSCAPE_16_9";
   attemptElapsedMs?: number;
   cumulativeElapsedMs?: number;
