@@ -134,7 +134,7 @@ export const REMOTE_JS = String.raw`(() => {
   const buttons = [...document.querySelectorAll("[data-command]")];
   const dialog = get("cancelDialog");
   const localStates = {
-    IDLE: "待命", PREPARED: "可開始", RUNNING: "轉檔中", PAUSING: "正在暫停",
+    IDLE: "待命", PREPARED: "可開始", PREFLIGHT: "預檢中", RUNNING: "轉檔中", PAUSING: "正在暫停",
     PAUSED: "已暫停",
     COMPLETED: "已完成", CANCELLED: "已取消", FAILED: "轉檔失敗",
   };

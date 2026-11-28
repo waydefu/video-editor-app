@@ -90,7 +90,7 @@ export const DEFAULT_AUDIO_PROCESSING_OPTIONS: AudioProcessingOptions = {
 };
 
 export type RemoteRenderControlState =
-  "IDLE" | "PREPARED" | "RUNNING" | "PAUSING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED";
+  "IDLE" | "PREPARED" | "PREFLIGHT" | "RUNNING" | "PAUSING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED";
 
 export interface RemoteRenderSnapshot {
   revision: number;
