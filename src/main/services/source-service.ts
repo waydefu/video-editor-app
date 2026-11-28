@@ -149,6 +149,9 @@ export class SourceService {
       }
     }
 
+    // Checked again at the commit point: an abort during the last ADDING step must not add anything.
+    // All assets are committed in one write, so an abort here means no earlier items were committed either.
+    if (signal?.aborted) return emptyCancelledResult(this.store.getProject());
     let updated: ProjectManifest;
     try {
       updated = assets.length > 0 ? await this.store.addAssets(assets, context) : this.store.getProject();

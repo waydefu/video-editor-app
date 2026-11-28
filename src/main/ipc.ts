@@ -636,12 +636,14 @@ export function registerIpc(
     await userPreferences.rememberDirectory(preferenceKey, result.filePaths[0], isFolder);
 
     return runProjectScopedJob(context, async () => {
+      // Each import owns its controller. Starting a new import replaces (and aborts) the previous owner.
       importController?.abort();
-      importController = new AbortController();
+      const controller = new AbortController();
+      importController = controller;
       try {
         return await sources.importSelected(
           result.filePaths,
-          importController.signal,
+          controller.signal,
           (progress) => {
             if (!event.sender.isDestroyed()) event.sender.send("import:progress", progress);
           },
@@ -653,7 +655,8 @@ export function registerIpc(
         }
         throw error;
       } finally {
-        importController = undefined;
+        // Only the owner clears the shared pointer; a newer import's controller must survive this finally.
+        if (importController === controller) importController = undefined;
       }
     });
   };
