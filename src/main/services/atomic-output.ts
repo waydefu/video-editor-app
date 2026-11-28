@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, link, rename, rm } from "node:fs/promises";
+import { copyFile, link, open, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 const RETRYABLE_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
+// Errors meaning "this filesystem cannot hard-link" (for example FAT or exFAT). These
+// are not refusals: the no-replace publish falls back to an exclusive reservation.
+const LINK_UNSUPPORTED_CODES = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EINVAL", "ENOSYS"]);
 const MAX_RENAME_ATTEMPTS = 5;
 const RENAME_RETRY_DELAY_MS = 75;
 
@@ -30,6 +33,10 @@ export class OutputAlreadyExistsError extends Error {
   }
 }
 
+function codeOf(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | undefined)?.code;
+}
+
 // On Windows, rename() replaces an existing destination in one step. Antivirus or
 // indexers can briefly hold the file, so retry transient lock errors.
 async function retryTransient(operation: () => Promise<void>): Promise<void> {
@@ -38,7 +45,7 @@ async function retryTransient(operation: () => Promise<void>): Promise<void> {
       await operation();
       return;
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
+      const code = codeOf(error);
       if (attempt >= MAX_RENAME_ATTEMPTS || !code || !RETRYABLE_CODES.has(code)) throw error;
       await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_DELAY_MS));
     }
@@ -56,10 +63,10 @@ function linkWithoutReplacing(from: string, to: string): Promise<void> {
 }
 
 function noClobberFailure(error: unknown, partialPath: string, outputPath: string): Error {
-  const code = (error as NodeJS.ErrnoException).code;
+  const code = codeOf(error);
   if (code === "EEXIST") return new OutputAlreadyExistsError(outputPath, partialPath);
   const failure = new Error(
-    `無法在不覆寫既有檔案的條件下發佈成品（${code ?? "未知錯誤"}）。此磁碟可能不支援硬連結；成品暫存檔已保留於：${partialPath}。`,
+    `無法在不覆寫既有檔案的條件下發佈成品（${code ?? "未知錯誤"}）；成品暫存檔已保留於：${partialPath}。`,
     { cause: error },
   );
   (failure as Error & { code?: string }).code = code;
@@ -79,26 +86,67 @@ async function publishWithoutReplacing(partialPath: string, outputPath: string):
   try {
     await linkWithoutReplacing(partialPath, outputPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw noClobberFailure(error, partialPath, outputPath);
-    // Cross-volume: stage a copy on the destination volume, then no-replace link it in.
-    const parsed = path.parse(outputPath);
-    const crossVolumePartial = path.join(
-      parsed.dir,
-      `.${parsed.name}.${randomUUID()}.cross-volume.partial${parsed.ext}`,
-    );
-    try {
-      await copyFile(partialPath, crossVolumePartial, constants.COPYFILE_EXCL);
-      await linkWithoutReplacing(crossVolumePartial, outputPath);
-    } catch (innerError) {
-      await rm(crossVolumePartial, { force: true }).catch(() => undefined);
-      throw noClobberFailure(innerError, partialPath, outputPath);
-    }
-    await rm(crossVolumePartial, { force: true }).catch(() => undefined);
+    const code = codeOf(error);
+    if (code === "EEXIST") throw new OutputAlreadyExistsError(outputPath, partialPath);
+    // EXDEV: source on another volume. Unsupported link: FAT/exFAT. Both use the reservation path.
+    if (code !== "EXDEV" && !(code && LINK_UNSUPPORTED_CODES.has(code)))
+      throw noClobberFailure(error, partialPath, outputPath);
+    await publishByReservation(partialPath, outputPath);
   }
   // Published. Removing the source name must not turn a finished output into a failure.
   await rm(partialPath, { force: true }).catch((error: unknown) => {
     console.warn("已完成成品寫入，但無法清理來源暫存檔。", error);
   });
+}
+
+/**
+ * No-replace publish for filesystems without hard links. (1) An exclusive create
+ * reserves the name; EEXIST means another owner, so refuse. (2) Rename the source
+ * over our own empty placeholder, staging a copy on the destination volume on EXDEV.
+ * (3) On failure remove only the placeholder we created, and only while it is still
+ * empty. (4) Before each rename the placeholder must still be size 0, or we refuse.
+ * The source partial is never removed here.
+ */
+async function publishByReservation(sourcePath: string, outputPath: string): Promise<void> {
+  try {
+    const handle = await open(outputPath, "wx");
+    await handle.close();
+  } catch (error) {
+    if (codeOf(error) === "EEXIST") throw new OutputAlreadyExistsError(outputPath, sourcePath);
+    throw noClobberFailure(error, sourcePath, outputPath);
+  }
+  // From here the zero-byte placeholder is ours; it is the only thing we may remove.
+  let staging: string | undefined;
+  try {
+    await assertPlaceholderStillEmpty(outputPath, sourcePath);
+    try {
+      await retryTransient(() => rename(sourcePath, outputPath));
+    } catch (error) {
+      if (codeOf(error) !== "EXDEV") throw error;
+      const parsed = path.parse(outputPath);
+      staging = path.join(parsed.dir, `.${parsed.name}.${randomUUID()}.cross-volume.partial${parsed.ext}`);
+      await copyFile(sourcePath, staging, constants.COPYFILE_EXCL);
+      await assertPlaceholderStillEmpty(outputPath, sourcePath);
+      await retryTransient(() => rename(staging as string, outputPath));
+      staging = undefined;
+    }
+  } catch (error) {
+    if (staging) await rm(staging, { force: true }).catch(() => undefined);
+    await removeOwnPlaceholder(outputPath);
+    if (error instanceof OutputAlreadyExistsError) throw error;
+    throw noClobberFailure(error, sourcePath, outputPath);
+  }
+}
+
+async function assertPlaceholderStillEmpty(outputPath: string, partialPath: string): Promise<void> {
+  const info = await stat(outputPath);
+  if (!info.isFile() || info.size !== 0) throw new OutputAlreadyExistsError(outputPath, partialPath);
+}
+
+async function removeOwnPlaceholder(outputPath: string): Promise<void> {
+  const info = await stat(outputPath).catch(() => undefined);
+  // A non-empty file was written by someone else: keep it.
+  if (info?.isFile() && info.size === 0) await rm(outputPath, { force: true }).catch(() => undefined);
 }
 
 async function publishReplacing(partialPath: string, outputPath: string): Promise<void> {
