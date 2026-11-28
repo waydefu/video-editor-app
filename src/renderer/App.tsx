@@ -38,6 +38,7 @@ import { MaterialEditorModal, type MaterialEditorSection } from "./components/Ma
 import { WatermarkSettingsModal } from "./components/WatermarkSettingsModal";
 import { MaterialSubtitleAnalysisModal } from "./components/MaterialSubtitleAnalysisModal";
 import { SafeDefaultButton } from "./components/SafeDefaultButton";
+import { hasUnsavedUserEdits } from "./project-leave-guard";
 import { RemoteControlModal } from "./components/RemoteControlModal";
 import { UpdateCenter } from "./components/UpdateCenter";
 import { formatBytes } from "./format";
@@ -149,7 +150,8 @@ export function App() {
   const [removeBusy, setRemoveBusy] = useState(false);
   const [lastRemovedMainId, setLastRemovedMainId] = useState<string>();
   const [showFileMenu, setShowFileMenu] = useState(false);
-  const [showNewProjectConfirm, setShowNewProjectConfirm] = useState(false);
+  /** Set while the unnamed-project leave guard dialog is open; names the action waiting behind it. */
+  const [leaveAction, setLeaveAction] = useState<"NEW" | "OPEN">();
   const [projectFilePath, setProjectFilePath] = useState<string>();
   const [projectFileBusy, setProjectFileBusy] = useState(false);
   const [saveState, setSaveState] = useState<"SAVED" | "SAVING" | "ERROR">("SAVED");
@@ -512,18 +514,11 @@ export function App() {
     }
   };
 
-  const projectHasContent = (value: ProjectManifest) =>
-    value.sources.length > 0 ||
-    value.introSegments.length > 0 ||
-    value.subtitleCues.length > 0 ||
-    value.bgmTracks.length > 0 ||
-    value.mediaInsertions.length > 0;
-
   const createNewProject = async () => {
     setProjectFileBusy(true);
     setError(undefined);
     setShowFileMenu(false);
-    setShowNewProjectConfirm(false);
+    setLeaveAction(undefined);
     try {
       const result = await window.sourceApp.newProject();
       closeProjectViews();
@@ -539,21 +534,28 @@ export function App() {
     }
   };
 
-  const requestNewProject = () => {
+  /** New and Open share one guard: an unnamed project with user edits is only left after save, discard, or cancel. */
+  const requestLeaveProject = (action: "NEW" | "OPEN") => {
     setShowFileMenu(false);
-    if (!projectFilePath && project && projectHasContent(project)) setShowNewProjectConfirm(true);
-    else void createNewProject();
+    if (!projectFilePath && project && hasUnsavedUserEdits(project)) setLeaveAction(action);
+    else void (action === "NEW" ? createNewProject() : openProjectFile());
   };
 
-  const saveThenCreateNewProject = async () => {
-    setShowNewProjectConfirm(false);
-    if (await saveProjectFile(true)) await createNewProject();
+  const saveThenLeaveProject = async () => {
+    const action = leaveAction;
+    setLeaveAction(undefined);
+    if (!action || !(await saveProjectFile(true))) return;
+    if (action === "NEW") await createNewProject();
+    else await openProjectFile();
   };
+
+  const discardAndLeaveProject = () => (leaveAction === "OPEN" ? openProjectFile() : createNewProject());
 
   const openProjectFile = async () => {
     setProjectFileBusy(true);
     setError(undefined);
     setShowFileMenu(false);
+    setLeaveAction(undefined);
     try {
       const result = await window.sourceApp.openProject();
       if (!result) return;
@@ -798,7 +800,7 @@ export function App() {
                   <strong>{project.name}</strong>
                   <small title={projectFilePath}>{projectFilePath ?? "尚未另存為專案檔"}</small>
                 </div>
-                <button role="menuitem" type="button" onClick={requestNewProject}>
+                <button role="menuitem" type="button" onClick={() => requestLeaveProject("NEW")}>
                   新增專案
                 </button>
                 <button
@@ -812,7 +814,7 @@ export function App() {
                 <button role="menuitem" type="button" onClick={() => void saveProjectFile(true)}>
                   另存專案…
                 </button>
-                <button role="menuitem" type="button" onClick={() => void openProjectFile()}>
+                <button role="menuitem" type="button" onClick={() => requestLeaveProject("OPEN")}>
                   開啟舊專案…
                 </button>
               </div>
@@ -1459,38 +1461,38 @@ export function App() {
           onConfirm={() => void removeAsset(confirmRemoveAsset)}
         />
       )}
-      {showNewProjectConfirm && (
+      {leaveAction && (
         <div className="modal-backdrop" role="presentation">
           <section
             className="confirm-remove-modal"
             role="alertdialog"
             aria-modal="true"
-            aria-labelledby="confirm-new-project-title"
-            aria-describedby="confirm-new-project-description"
+            aria-labelledby="confirm-leave-project-title"
+            aria-describedby="confirm-leave-project-description"
           >
             <header>
-              <span className="eyebrow">NEW PROJECT</span>
-              <h2 id="confirm-new-project-title">要捨棄目前尚未儲存的專案嗎？</h2>
+              <span className="eyebrow">{leaveAction === "NEW" ? "NEW PROJECT" : "OPEN PROJECT"}</span>
+              <h2 id="confirm-leave-project-title">
+                {leaveAction === "NEW" ? "要捨棄目前尚未儲存的專案嗎？" : "要捨棄目前尚未儲存的專案，開啟其他專案嗎？"}
+              </h2>
             </header>
-            <div id="confirm-new-project-description">
+            <div id="confirm-leave-project-description">
               <p>
-                <strong>目前專案還沒有另存成專案檔，新增專案後這份內容將被捨棄。</strong>
+                <strong>
+                  目前專案還沒有另存成專案檔，{leaveAction === "NEW" ? "新增專案" : "開啟其他專案"}後這份內容將被捨棄。
+                </strong>
               </p>
               <p>建議先使用「另存專案…」保留目前的編輯內容。來源影片與照片不會被刪除或修改。</p>
             </div>
             <footer>
-              <SafeDefaultButton
-                className="secondary-button"
-                type="button"
-                onClick={() => setShowNewProjectConfirm(false)}
-              >
+              <SafeDefaultButton className="secondary-button" type="button" onClick={() => setLeaveAction(undefined)}>
                 取消
               </SafeDefaultButton>
               <button
                 className="primary-button"
                 type="button"
                 disabled={projectFileBusy}
-                onClick={() => void saveThenCreateNewProject()}
+                onClick={() => void saveThenLeaveProject()}
               >
                 先另存專案…
               </button>
@@ -1498,9 +1500,9 @@ export function App() {
                 className="danger-button"
                 type="button"
                 disabled={projectFileBusy}
-                onClick={() => void createNewProject()}
+                onClick={() => void discardAndLeaveProject()}
               >
-                捨棄並新增
+                {leaveAction === "NEW" ? "捨棄並新增" : "捨棄並開啟"}
               </button>
             </footer>
           </section>
