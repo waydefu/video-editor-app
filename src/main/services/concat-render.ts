@@ -2661,7 +2661,10 @@ export class ConcatRenderService {
     outputPath: string,
     signal?: AbortSignal,
     onProgress: (progress: ConcatRenderProgress) => void = () => undefined,
+    options: { allowOverwrite?: boolean } = {},
   ): Promise<ConcatRenderResult> {
+    // No-clobber is the default: only an explicit, user-confirmed overwrite may replace an existing file.
+    const allowOverwrite = options.allowOverwrite === true;
     if (!Array.isArray(request.orderedAssetIds)) throw new Error("影片片段順序格式無效。");
     const purpose = request.purpose ?? "CONCAT";
     if (purpose !== "CONCAT" && purpose !== "INTRO" && purpose !== "CLIP" && purpose !== "SHORTS")
@@ -3949,7 +3952,13 @@ export class ConcatRenderService {
       // Re-check file identity at commit time, after FFmpeg, so a source linked or
       // created during rendering is never replaced even by a confirmed overwrite.
       await assertOutputPathNotProtected(outputPath, protectedProjectPaths(this.store.getProject()));
-      await finalizePartialOutput(audioPartialPath, outputPath);
+      try {
+        await finalizePartialOutput(audioPartialPath, outputPath, { allowOverwrite });
+      } catch (error) {
+        // A refused commit keeps the finished partial so the user can recover it.
+        preserveAudioPartial = true;
+        throw error;
+      }
       diskMonitor.releaseTempJob("audio-temp");
       const outputStat = await stat(outputPath);
       if (!outputStat.isFile() || outputStat.size <= 0) throw new Error("輸出檔案驗證失敗。");

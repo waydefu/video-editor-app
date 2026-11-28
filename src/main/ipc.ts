@@ -1094,15 +1094,21 @@ export function registerIpc(
     let successfulResult: import("../shared/domain").ConcatRenderResult | undefined;
     try {
       renderCommands.markStarting(request);
-      const result = await concatRenderer.render(request, selectedOutput.outputPath, controller.signal, (progress) => {
-        updateBackgroundJob(backgroundJobId, {
-          percent: progress.percent,
-          detail: progress.currentSegment ?? progress.phase,
-          attemptElapsedMs: progress.attemptElapsedMs,
-          cumulativeElapsedMs: progress.cumulativeElapsedMs,
-        });
-        publishConcatProgress(progress);
-      });
+      const result = await concatRenderer.render(
+        request,
+        selectedOutput.outputPath,
+        controller.signal,
+        (progress) => {
+          updateBackgroundJob(backgroundJobId, {
+            percent: progress.percent,
+            detail: progress.currentSegment ?? progress.phase,
+            attemptElapsedMs: progress.attemptElapsedMs,
+            cumulativeElapsedMs: progress.cumulativeElapsedMs,
+          });
+          publishConcatProgress(progress);
+        },
+        { allowOverwrite: selectedOutput.allowOverwrite },
+      );
       await outputHistory.registerRender(result, store.getProject().name, store.getProject().id);
       finishBackgroundJob(backgroundJobId, result.cancelled ? "CANCELLED" : "COMPLETED", {
         detail: result.cancelled ? "使用者取消，已保留可播放結尾" : result.outputPath,
