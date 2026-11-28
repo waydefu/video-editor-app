@@ -1,0 +1,106 @@
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { vi, it, expect, afterEach } from "vitest";
+import { ProjectStore } from "../src/main/services/project-store";
+import { MediaProbe } from "../src/main/services/media-probe";
+import { SourceService } from "../src/main/services/source-service";
+import { registerIpc } from "../src/main/ipc";
+import type { SubtitleCue } from "../src/shared/domain";
+const mock=vi.hoisted(()=>({handlers:new Map<string,Function>(),root:"",output:""}));
+vi.mock("electron",()=>({
+ app:{getPath:()=>mock.root},
+ BrowserWindow:{fromWebContents:()=>undefined,getAllWindows:()=>[]},
+ clipboard:{},shell:{},
+ dialog:{showSaveDialog:async()=>({canceled:false,filePath:mock.output}),showOpenDialog:async()=>({canceled:false,filePaths:[mock.output]})},
+ ipcMain:{handle:(channel:string,listener:Function)=>mock.handlers.set(channel,listener)}
+}));
+let roots:string[]=[];
+afterEach(async()=>{mock.handlers.clear();await Promise.all(roots.splice(0).map(p=>rm(p,{recursive:true,force:true})))});
+async function setup(override?: (args:any[])=>void){
+ const root=await mkdtemp(path.join(os.tmpdir(),"sw-ipc-audit-"));roots.push(root);mock.root=root;
+ const store=new ProjectStore(path.join(root,"data"));await store.initialize();
+ const args=new Array(27).fill({});
+ args[0]=store;
+ args[16]={getLastDirectory:()=>root,rememberDirectory:async()=>{}};
+ args[24]={setHandlers:()=>{},resetProject:()=>{},setProjectName:()=>{}};
+ args[25]={setStatusListener:()=>{}};
+ override?.(args);
+ registerIpc(...args as Parameters<typeof registerIpc>);
+ const invoke=(name:string,...a:unknown[])=>mock.handlers.get(name)!({sender:{once:()=>{},removeListener:()=>{},isDestroyed:()=>false}},...a);
+ mock.output=path.join(root,"test.srt");
+ return {store,root,invoke};
+}
+async function addPhoto(root:string,store:ProjectStore){
+ const src=path.join(root,"photo.jpg");await writeFile(src,"photo");
+ return new SourceService(store,new MediaProbe()).importSelected([src]);
+}
+const cue:SubtitleCue={id:"draft-id",startMs:0,endMs:1000,text:"AI original",reviewStatus:"DRAFT",timelineScope:"MAIN"};
+it("OBSERVED BUG: empty export leaves project switch permanently blocked",async()=>{
+ const {invoke}=await setup();
+ const {token}=await invoke("subtitle:choose-output","test");
+ await expect(invoke("subtitle:export",token,["MAIN"])).rejects.toThrow(/沒有已確認/);
+ await invoke("subtitle:cancel-export");
+ await expect(invoke("project:new")).rejects.toThrow(/字幕或 AI 工作/);
+});
+it("OBSERVED BUG: deleted draft passes confirmation guard, writes old draft",async()=>{
+ const {root,store,invoke}=await setup();await addPhoto(root,store);await store.setSubtitleCues([cue]);
+ const {token}=await invoke("subtitle:choose-output","test");
+ await invoke("subtitle:save-ai-draft",token,["MAIN"]);
+ await store.setSubtitleCues([]);
+ await invoke("subtitle:promote-ai-draft",token,"OVERWRITE");
+ expect(await readFile(mock.output,"utf8")).toContain("AI original");
+});
+it("OBSERVED BUG: stale token promotes draft after project switch",async()=>{
+ const {root,store,invoke}=await setup();await addPhoto(root,store);await store.setSubtitleCues([cue]);
+ const {token}=await invoke("subtitle:choose-output","test");
+ await invoke("subtitle:save-ai-draft",token,["MAIN"]);
+ await invoke("project:new");
+ await invoke("subtitle:promote-ai-draft",token,"OVERWRITE");
+ expect(await readFile(mock.output,"utf8")).toContain("AI original");
+});
+it("OBSERVED BUG: promotion publishes unedited text after user confirmed correction",async()=>{
+ const {root,store,invoke}=await setup();await addPhoto(root,store);await store.setSubtitleCues([cue]);
+ const {token}=await invoke("subtitle:choose-output","test");
+ await invoke("subtitle:save-ai-draft",token,["MAIN"]);
+ await store.setSubtitleCues([{...cue,text:"Human correction",reviewStatus:"CONFIRMED",userEdited:true}]);
+ await invoke("subtitle:promote-ai-draft",token,"OVERWRITE");
+ expect(await readFile(mock.output,"utf8")).toContain("AI original");
+});
+
+it("OBSERVED BUG: concurrent uploads both pass preflight before controller is set",async()=>{
+ let resolveOutput!: (x:unknown)=>void;
+ const outputPromise=new Promise(r=>{resolveOutput=r});
+ let resolveUpload!: (x:unknown)=>void;
+ const uploadPromise=new Promise(r=>{resolveUpload=r});
+ const upload=vi.fn(()=>uploadPromise);
+ const {invoke}=await setup(args=>{
+   args[13]={upload};
+   args[15]={get:()=>outputPromise};
+   args[20]={acquire:()=>()=>{}};
+   args[26]={cancel:()=>{},notifySuccess:()=>{}};
+   args[16].snapshot=()=>({renderDefaults:{}});
+ });
+ const one=invoke("youtube:upload",{jobId:"one"});
+ const two=invoke("youtube:upload",{jobId:"two"});
+ resolveOutput({purpose:"CONCAT",outputPath:"mock.mp4"});
+ await vi.waitFor(()=>expect(upload).toHaveBeenCalledTimes(2));
+ resolveUpload({thumbnailStatus:"FAILED"});
+ await Promise.all([one,two]);
+});
+it("OBSERVED BUG R2-08: overlapping benchmark runs both acquire render resources",async()=>{
+ let finish!:(value:unknown)=>void;
+ const pending=new Promise(r=>{finish=r});
+ const run=vi.fn(()=>pending);
+ const {invoke}=await setup(args=>{args[20]={acquire:()=>()=>{}};args[22]={run}});
+ const one=invoke("render-benchmark:run");const two=invoke("render-benchmark:run");
+ await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(2));finish({});await Promise.all([one,two]);
+});
+it("OBSERVED BUG R2-09: first import finally clears second import cancellation controller",async()=>{
+ const signals:AbortSignal[]=[];const finishes:Array<(v:unknown)=>void>=[];
+ const {invoke}=await setup(args=>{args[1]={importSelected:(_files:string[],signal:AbortSignal)=>{signals.push(signal);return new Promise(r=>finishes.push(r))}}});
+ const one=invoke("source:choose-files");await vi.waitFor(()=>expect(signals).toHaveLength(1));
+ const two=invoke("source:choose-files");await vi.waitFor(()=>expect(signals).toHaveLength(2));
+ expect(signals[0].aborted).toBe(true);finishes[0]({});await one;
+ await invoke("source:cancel-import");expect(signals[1].aborted).toBe(false);finishes[1]({});await two;
+});

@@ -1,0 +1,80 @@
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { PassThrough } from "node:stream";
+import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import { RemoteControlServer } from "../src/main/services/remote-control-server";
+import { RenderCommandState } from "../src/main/services/render-command-state";
+import { PortableUpdateService } from "../src/main/services/portable-update";
+import { OutputHistoryStore } from "../src/main/services/output-history";
+import { ProjectStore } from "../src/main/services/project-store";
+import type { ConcatRenderRequest } from "../src/shared/domain";
+// Simulate transport only: this sandbox denies network interface enumeration/bind.
+vi.mock("node:os",async importOriginal=>{const actual:any=await importOriginal();return {...actual,default:actual.default,networkInterfaces:()=>({})}});
+vi.mock("node:http",async importOriginal=>{const actual:any=await importOriginal();return {...actual,createServer:()=>{const server:any=new EventEmitter();server.listening=false;server.listen=(_port:number,_host:string,cb:()=>void)=>{queueMicrotask(()=>{server.listening=true;cb()})};server.address=()=>({port:43210});server.close=(cb:()=>void)=>{server.listening=false;queueMicrotask(cb)};return server}}});
+const roots:string[]=[];
+async function temp(){const root=await mkdtemp(path.join(os.tmpdir(),"sw-r2-"));roots.push(root);return root}
+afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})))});
+function deferred<T=void>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>{resolve=r});return {promise,resolve}}
+const renderRequest={outputToken:"test",resolution:"360P",orderedAssetIds:["a"],transitionSeconds:0.3} as ConcatRenderRequest;
+function fakeRequest(server:RemoteControlServer,pathname:string,headers:Record<string,string>,body?:string){
+ const req:any=new PassThrough();req.method="POST";req.url=pathname;req.headers={host:"127.0.0.1:43210",origin:"http://127.0.0.1:43210",...headers};req.socket={remoteAddress:"127.0.0.1"};
+ const res:any={status:0,body:"",headers:{},writeHead(status:number,headers:Record<string,string>){this.status=status;Object.assign(this.headers,headers)},setHeader(key:string,val:string){this.headers[key.toLowerCase()]=val},end(body:string){this.body=body}};
+ const complete=(server as any).handle(req,res);if(body!==undefined)req.end(body);
+ return {req,res,complete};
+}
+async function pair(server:RemoteControlServer){
+ const status=await server.start();const url=new URL(status.pairingUrl!);
+ const token=decodeURIComponent(url.hash.slice("#pair=".length));
+ const pair=fakeRequest(server,"/api/pair",{"content-type":"application/json"},JSON.stringify({token}));await pair.complete;
+ expect(pair.res.status).toBe(200);
+ return {cookie:pair.res.headers["set-cookie"].split(";")[0],"x-scenery-csrf":JSON.parse(pair.res.body).csrfToken,"content-type":"application/json"};
+}
+it("OBSERVED BUG R2-01: revoked remote session can execute an already authenticated slow-body command",async()=>{
+ const state=new RenderCommandState("test");const start=vi.fn(async()=>({} as any));
+ state.setHandlers({startPrepared:start,resumeCheckpoint:vi.fn(),cancel:vi.fn()});state.prepare(renderRequest,"test.mp4");
+ const server=new RemoteControlServer(state);
+ try{
+  const auth=await pair(server);
+  const command=fakeRequest(server,"/api/command/start",auth);
+  // handle() has authenticated synchronously and is now awaiting streamed body.
+  await server.stop();command.req.end("{}");await command.complete;
+  expect(command.res.status).toBe(202);expect(start).toHaveBeenCalledTimes(1);
+ }finally{await server.stop()}
+});
+it("OBSERVED BUG R2-02: concurrent remote start returns enabled without port or pairing",async()=>{
+ const server=new RemoteControlServer(new RenderCommandState("test"));
+ try{const first=server.start();const second=await server.start();await first;expect(second.enabled).toBe(true);expect(second.port).toBeUndefined();expect(second.pairingUrl).toBeUndefined()}
+ finally{await server.stop()}
+});
+it("OBSERVED BUG R2-03: remote preflight displays PREPARED although start has consumed request",async()=>{
+ const state=new RenderCommandState("test");const done=deferred<any>();state.setHandlers({startPrepared:()=>done.promise,resumeCheckpoint:vi.fn(),cancel:vi.fn()});
+ state.prepare(renderRequest,"test.mp4");await state.startPrepared();
+ expect(state.snapshot()).toMatchObject({state:"PREPARED",prepared:true});await expect(state.startPrepared()).rejects.toThrow();done.resolve({});
+});
+it("OBSERVED BUG R2-04: checking for updates hides verified staged READY state",async()=>{
+ const root=await temp();const {publicKey,privateKey}=generateKeyPairSync("ed25519");
+ const key=path.join(root,"public.pem");await writeFile(key,publicKey.export({type:"spki",format:"pem"}));
+ const bytes=Buffer.from("fixture archive");
+ const manifest={schemaVersion:1,version:"0.89.0",file:"scenerywalker-portable-win-x64.zip",bytes:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex")};
+ const payload=Buffer.from(JSON.stringify(manifest));
+ const signed=JSON.stringify({payload:payload.toString("base64"),signature:sign(null,payload,privateKey).toString("base64")});
+ const fetcher=vi.fn<typeof fetch>(async input=>String(input).endsWith("/releases/latest")?Response.json({tag_name:"v0.89.0",draft:false,prerelease:false,assets:[{name:manifest.file},{name:"scenerywalker-portable-update.json"}]}):String(input).endsWith(".json")?new Response(signed):new Response(new Uint8Array(bytes)));
+ const service=new PortableUpdateService("0.88.0",true,path.join(root,"updates"),key,fetcher);
+ expect((await service.download()).state).toBe("READY");expect(await readFile(await service.verifiedArchive())).toEqual(bytes);expect((await service.check()).state).toBe("AVAILABLE");
+});
+it("OBSERVED BUG R2-05: replaced output retains original project metadata and is available",async()=>{
+ const root=await temp();const outputPath=path.join(root,"output.mp4");await writeFile(outputPath,"original bytes");
+ const store=new OutputHistoryStore(path.join(root,"data"));await store.initialize();
+ await store.registerRender({jobId:"job",outputPath,sizeBytes:14,expectedDurationMs:20000,transitionSeconds:0.3,resolution:"360P",purpose:"CONCAT"},"Original project","original-id");
+ await writeFile(outputPath,"replaced bytes");
+ expect(await store.get("job")).toMatchObject({exists:true,projectName:"Original project",purpose:"CONCAT",durationMs:20000,successful:true});
+});
+it("OBSERVED BUG R2-06: corrupt internal manifest prevents opening intact session project",async()=>{
+ const root=await temp();const data=path.join(root,"data");const store=new ProjectStore(data);await store.initialize();
+ const saved=path.join(root,"saved.swproj");await store.saveProjectAs(saved,"Saved");
+ const original=await readFile(saved);await writeFile(store.manifestPath,"{incomplete");
+ await expect(new ProjectStore(data).initialize()).rejects.toThrow();expect(await readFile(saved)).toEqual(original);
+});

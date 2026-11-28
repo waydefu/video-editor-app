@@ -1,0 +1,115 @@
+import { mkdtemp, mkdir, rm, writeFile, readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { afterEach, expect, it } from "vitest";
+import { ProjectStore } from "../src/main/services/project-store";
+import { SourceService } from "../src/main/services/source-service";
+import { BgmService } from "../src/main/services/bgm-service";
+import { MediaProbe } from "../src/main/services/media-probe";
+import { renderThumbnail } from "../src/main/services/thumbnail-render";
+import type { ThumbnailCandidate, SourceAsset } from "../src/shared/domain";
+const roots:string[]=[];
+async function setup(){
+ const root=await mkdtemp(path.join(os.tmpdir(),"sw-audit-"));roots.push(root);
+ const store=new ProjectStore(path.join(root,"data"));await store.initialize();
+ return {root,store,source:new SourceService(store,new MediaProbe())};
+}
+afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})))});
+it("OBSERVED BUG: source import writes into new project",async()=>{
+ const {root,store,source}=await setup();
+ const file=path.join(root,"one.mp4");await writeFile(file,"original");
+ const oldId=store.getProject().id;
+ let creation:ReturnType<ProjectStore["newProject"]>|undefined;
+ await source.importSelected([file],undefined,p=>{if(p.phase==="ADDING" && p.processed===0) creation=store.newProject()});
+ expect(creation).toBeDefined();const next=await creation!;
+ expect(next.project.id).not.toEqual(oldId);
+ expect(store.getProject().id).toEqual(next.project.id);
+ expect(store.getProject().sources.map(s=>s.fileName)).toEqual(["one.mp4"]);
+});
+it("OBSERVED BUG: cancellation during final file still commits",async()=>{
+ const {root,store,source}=await setup();const file=path.join(root,"one.mp4");await writeFile(file,"original");
+ const controller=new AbortController();
+ const result=await source.importSelected([file],controller.signal,p=>{if(p.phase==="ADDING")controller.abort()});
+ expect(result.cancelled).toBe(false);expect(store.getProject().sources).toHaveLength(1);
+});
+it("OBSERVED BUG: failed new operation replaces unnamed manifest before reporting failure",async()=>{
+ const {store}=await setup();await store.setSortMode("FILE_NAME");const old=store.getProject();
+ await mkdir(store.sessionPath,{recursive:true});await expect(store.newProject()).rejects.toThrow();
+ expect(store.getProject().id).toEqual(old.id);
+ const disk=JSON.parse(await readFile(store.manifestPath,"utf8"));expect(disk.id).not.toEqual(old.id);
+ const restarted=new ProjectStore(path.dirname(path.dirname(path.dirname(store.manifestPath))));
+ await restarted.initialize();expect(restarted.getProject().id).toBe(disk.id);
+});
+it("OBSERVED BUG: BGM probe result contaminates new project",async()=>{
+ const {root,store}=await setup();const file=path.join(root,"music.mp3");await writeFile(file,"fake audio");
+ let enter!:()=>void, complete!:(x:unknown)=>void;
+ const entered=new Promise<void>(r=>{enter=r});
+ const probe={probe:()=>{enter();return new Promise(r=>{complete=r})}} as unknown as MediaProbe;
+ const service=new BgmService(store,probe);
+ const work=service.importSelected([file]);await entered;
+ const created=await store.newProject();complete({durationMs:1000,audioCodec:"mp3"});await work;
+ expect(store.getProject().id).toBe(created.project.id);expect(store.getProject().bgmTracks).toHaveLength(1);
+});
+it("OBSERVED BUG: delayed metadata probe overwrites newer editing settings",async()=>{
+ const {root,store,source}=await setup();const file=path.join(root,"photo.jpg");await writeFile(file,"photo");
+ const initial=await source.importSelected([file]);const id=initial.project.sources[0].id;
+ let enter!:()=>void,complete!:(x:unknown)=>void;
+ const entered=new Promise<void>(r=>{enter=r});
+ const probe={probe:()=>{enter();return new Promise(r=>{complete=r})}} as unknown as MediaProbe;
+ const service=new SourceService(store,probe);
+ const pending=service.ensureMetadata(id);await entered;
+ await store.setImageDuration(id,6000);
+ complete({width:100,height:100,displayWidth:100,displayHeight:100,rotationDegrees:0});
+ await pending;expect(store.getAsset(id)?.imageDurationMs).toBe(5000);
+});
+const candidate={sourceTimeMs:0,style:{text:"",textXPercent:50,textYPercent:50,fontSizePx:40,textColor:"#FFFFFF",outlineWidthPx:1,overlayOpacityPercent:0}} as ThumbnailCandidate;
+it("OBSERVED BUG: thumbnail export can replace original source",async()=>{
+ const {root}=await setup();const file=path.join(root,"photo.png");await writeFile(file,"original image");
+ const fake=path.join(root,"mock-ffmpeg");await writeFile(fake,'#!/bin/sh\nfor a in "$@"; do out="$a"; done\nhead -c 256 /dev/zero > "$out"\n',{mode:0o755});
+ await renderThumbnail({kind:"IMAGE",sourcePath:file} as SourceAsset,candidate,file,"png",fake);
+ expect((await readFile(file)).length).toBe(256);
+});
+it("OBSERVED BUG: ffmpeg failure leaves thumbnail text partial file",async()=>{
+ const {root}=await setup();const file=path.join(root,"photo.png");await writeFile(file,"original image");
+ const fake=path.join(root,"mock-ffmpeg");await writeFile(fake,'#!/bin/sh\nexit 1\n',{mode:0o755});
+ await expect(renderThumbnail({kind:"IMAGE",sourcePath:file} as SourceAsset,candidate,path.join(root,"out.png"),"png",fake)).rejects.toThrow();
+ expect((await readdir(root)).some(p=>p.endsWith(".partial.png.txt"))).toBe(true);
+});
+import { runProcess } from "../src/main/services/process-runner";
+import { ConcatRenderService } from "../src/main/services/concat-render";
+import { mainRenderSelections } from "../src/shared/editing-rules";
+it("OBSERVED BUG: concat export replaces a source excluded from its render list",async()=>{
+ const {root,store,source}=await setup();
+ const active=path.join(root,"first.mp4"), excluded=path.join(root,"excluded.mp4");
+ for(const [file,color] of [[active,"red"],[excluded,"blue"]]) await runProcess("ffmpeg",["-hide_banner","-loglevel","error","-f","lavfi","-i",`color=${color}:s=320x180:r=30`,"-t","1","-c:v","libx264","-pix_fmt","yuv420p","-y",file]);
+ await source.importSelected([active,excluded]);
+ await Promise.all(store.getProject().sources.map(asset=>source.ensureMetadata(asset.id)));
+ const excludedAsset=store.getProject().sources.find(a=>a.sourcePath===excluded)!;
+ await store.removeMainAsset(excludedAsset.id);
+ const before=await readFile(excluded);
+ const clipSelections=mainRenderSelections(store.getProject());
+ await new ConcatRenderService(store,source).render({outputToken:"test",orderedAssetIds:clipSelections.map(c=>c.assetId),clipSelections,transitionSeconds:0.3,resolution:"360P",includeWatermark:false},excluded);
+ expect((await readFile(excluded)).equals(before)).toBe(false);
+},30000);
+it("OBSERVED BUG: two stores on shared App Data lose each other's changes",async()=>{
+ const {root,store}=await setup();const other=new ProjectStore(path.join(root,"data"));await other.initialize();
+ await store.setSortMode("FILE_NAME");
+ await other.setSourceAudioVolume(55);
+ const restarted=new ProjectStore(path.join(root,"data"));await restarted.initialize();
+ expect(restarted.getProject().sortMode).toBe("SMART_SEQUENCE");
+ expect(restarted.getProject().sourceAudioVolumePercent).toBe(55);
+});
+it("OBSERVED BUG R2-07: automatic output created by another process during render is overwritten at finalization",async()=>{
+ const {root,store,source}=await setup();
+ const active=path.join(root,"first.mp4"),output=path.join(root,"new-output.mp4");
+ await runProcess("ffmpeg",["-hide_banner","-loglevel","error","-f","lavfi","-i","color=red:s=320x180:r=30","-t","1","-c:v","libx264","-pix_fmt","yuv420p","-y",active]);
+ await source.importSelected([active]);await source.ensureMetadata(store.getProject().sources[0].id);
+ const clipSelections=mainRenderSelections(store.getProject());
+ let inserted=false;
+ // The callback happens synchronously before finalization. Simulate an external writer.
+ const {writeFileSync}=await import("node:fs");
+ await new ConcatRenderService(store,source).render({outputToken:"test",orderedAssetIds:clipSelections.map(c=>c.assetId),clipSelections,transitionSeconds:0.3,resolution:"360P",includeWatermark:false},output,undefined,progress=>{
+   if(progress.phase==="FINALIZING"&&!inserted){writeFileSync(output,"other writer's file");inserted=true}
+ });
+ expect(inserted).toBe(true);expect((await readFile(output)).toString()).not.toBe("other writer's file");
+},30000);

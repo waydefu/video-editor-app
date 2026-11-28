@@ -1,0 +1,59 @@
+Pinned HEAD: d8f31fae6bd5ee747f298ea29f07fd035a08efea
+Command: npm test -- --exclude '**/audit*local-only*'
+ Test Files  8 failed | 103 passed | 1 skipped (112)
+      Tests  48 failed | 620 passed | 1 skipped (669)
+   Start at  08:55:27
+   Duration  18.55s (transform 8.82s, setup 0ms, import 17.16s, tests 77.24s, environment 6.41s)
+
+
+ FAIL  tests/concat-render.integration.test.ts > concat preview filter plan > resumes from a failed segment and retries only final concat after a simulated OOM
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders more than six clips through bounded low-memory stages and removes every work file
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders a 360p H.264/AAC dissolve preview while leaving every source byte unchanged
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders the selected color preset into Main when the project consistency option is enabled
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > cleans a too-early invalid partial when the render is cancelled
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > gracefully finalizes a playable MP4 when cancellation happens after frames exist
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > uses persisted per-video IN/OUT points when rendering the sorted concat
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > removes a middle Main range without black or silent placeholder and preserves every source hash
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders multiple adjustable Intro ranges from the same source without using the stored concat trim
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders a manually extended Intro range without applying the configured recommendation as a cap
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > places confirmed Intro segments before Main when automatic concatenation is selected
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > ends Intro-only BGM before the Main-start prompt and shifts Main-only BGM past it
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders the required 3-second Main-start prompt from a read-only source with two Chinese text rows
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > encodes the 4K preview option as an actual 3840x2160 MP4
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders the preferred H.265 MP4 and honors the per-render watermark opt-out
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders a photo for its persisted three-to-seven-second duration without changing the image or video source
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > splits an anchor video around an inserted photo and mixes the shutter without changing either source
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > splits a host around an independently trimmed inserted video and preserves both sources
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > renders measurable 0%/100%/200% clip automation over the 80% default while preserving source hashes
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > mixes a read-only MP3 with fades and 200% gain under the output limiter, and blocks offline BGM
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > auto-dubs silent clips with the first READY BGM track unless opted out
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > auto-dubs a selected video range whose audio track exists but is acoustically silent
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > honors rotation metadata and renders a portrait clip over same-source blurred side fill
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > actually burns independently styled Traditional Chinese and English subtitles into a playable MP4
+ FAIL  tests/concat-render.integration.test.ts > concat preview integration > actually burns confirmed Intro subtitles into an Intro-only YouTube test preview
+ FAIL  tests/insertion-audio-render.integration.test.ts > canonical insertion audio FFmpeg mix > renders source+BGM+SFX together, loops without a silence gap, and keeps the master below clipping
+ FAIL  tests/output-path.test.ts > automatic preview output path > keeps a readable MP4 name while neutralizing path and Windows-invalid characters
+ FAIL  tests/remote-control-server.test.ts > RemoteControlServer > cleans up a listener if pairing initialization fails and permits retry
+ FAIL  tests/remote-control-server.test.ts > RemoteControlServer > uses one-time fragment pairing, HttpOnly Strict cookie, CSRF and exact LAN host/origin
+ FAIL  tests/remote-control-server.test.ts > RemoteControlServer > requires a server-issued second-stage nonce for cancel and disconnect does not cancel render
+ FAIL  tests/remote-control-server.test.ts > RemoteControlServer > rejects a cancel confirmation issued for a previous render
+ FAIL  tests/remote-control-server.test.ts > RemoteControlServer > rotates pairing and invalidates every prior session across a stop/restart
+ FAIL  tests/remote-control-server.test.ts > RemoteControlServer > reconnects SSE with a fresh authoritative snapshot without affecting render state
+ FAIL  tests/render-disk-space.test.ts > render disk reliability > uses independent soft reserves for TEMP and cross-volume final output
+ FAIL  tests/render-disk-space.test.ts > render disk reliability > uses the largest lifecycle branch instead of summing files that never coexist
+ FAIL  tests/render-disk-space.test.ts > render disk reliability > evaluates TEMP and output peaks independently on different volumes
+ FAIL  tests/render-estimate.test.ts > render preflight estimate > estimates output size/time and preserves a 1 GB reserve
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > defaults C to a 2 GiB soft reserve without treating 10 GiB free as fatal
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > makes about 164/73 GiB schedulable for the requested E/C defaults
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > selects fallback only for the next job and accounts for committed bytes
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > keeps E primary when it has room and safe-pauses when neither volume can fit the next job
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > never uses an explicitly disabled fallback
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > honors manual PRIMARY/FALLBACK selection without silently crossing volumes
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > allows start when E cannot fit one job but C can, without summing their free space
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > keeps Final Output as an independent hard gate
+ FAIL  tests/render-temp-scheduler.test.ts > multi-volume render TEMP scheduler > does not double-spend free space when TEMP and final output share C
+ FAIL  tests/user-preferences.test.ts > user preferences > migrates a legacy single TEMP path into the primary slot and defaults fallback selection to AUTO
+ FAIL  tests/user-preferences.test.ts > user preferences > migrates the existing E:\temp 20 GiB and C: 30 GiB reserves without changing other custom values
+
+Audit reproduction run: npx vitest run tests/audit-local-only.test.ts tests/audit-ipc-local-only.test.ts tests/audit-r2-local-only.test.ts tests/renderer/audit-local-only.test.tsx -t 'OBSERVED BUG'
+Test Files 4 passed (4); Tests 26 passed | 90 skipped (116); Duration 3.19s
