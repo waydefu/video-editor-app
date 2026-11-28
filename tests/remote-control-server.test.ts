@@ -273,4 +273,56 @@ describe("RemoteControlServer", () => {
     expect(startPrepared).not.toHaveBeenCalled();
     expect(state.snapshot().state).toBe("PREPARED");
   });
+
+  it("R2-02: concurrent start calls each receive the complete running status", async () => {
+    const server = new RemoteControlServer(new RenderCommandState("LAN Project"));
+    running.push(server);
+    const [first, second] = await Promise.all([server.start(), server.start()]);
+    expect(second.enabled).toBe(true);
+    expect(second.port).toBeGreaterThan(0);
+    expect(second.port).toBe(first.port);
+    expect(second.pairingUrl).toMatch(/^http:\/\//);
+    expect(second.qrDataUrl).toMatch(/^data:image\//);
+  });
+
+  it("R2-02: a stop issued while start is in flight leaves no phantom server or QR code", async () => {
+    const server = new RemoteControlServer(new RenderCommandState("LAN Project"));
+    running.push(server);
+    await Promise.allSettled([server.start(), server.stop()]);
+    expect(server.status()).toMatchObject({
+      enabled: false,
+      port: undefined,
+      pairingUrl: undefined,
+      qrDataUrl: undefined,
+    });
+  });
+
+  it("R2-02: stop does not wait indefinitely for a stalled authenticated body", async () => {
+    const server = new RemoteControlServer(new RenderCommandState("LAN Project"));
+    const auth = await paired(server);
+    const authenticate = vi.spyOn(
+      server as unknown as { authenticate: (request: IncomingMessage) => unknown },
+      "authenticate",
+    );
+    const url = new URL(auth.origin);
+    const clientRequest = httpRequest({
+      hostname: url.hostname,
+      port: url.port,
+      path: "/api/command/start",
+      method: "POST",
+      agent: false,
+      headers: {
+        Cookie: auth.cookie,
+        Origin: auth.origin,
+        "X-Scenery-CSRF": auth.csrf,
+        "Content-Type": "application/json",
+      },
+    });
+    clientRequest.on("error", () => undefined);
+    clientRequest.write("{");
+    await vi.waitFor(() => expect(authenticate).toHaveBeenCalled());
+    await server.stop();
+    expect(server.status().enabled).toBe(false);
+    clientRequest.destroy();
+  });
 });
