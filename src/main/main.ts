@@ -50,6 +50,7 @@ import { moveWindowsCursor, safeActionCenter } from "./services/safe-cursor";
 import { RenderCommandState } from "./services/render-command-state";
 import { RemoteControlServer } from "./services/remote-control-server";
 import { PostSuccessPowerScheduler } from "./services/post-success-power";
+import { acquireSingleInstanceLock, UPDATE_HANDOFF_ARG } from "./services/single-instance";
 import { RenderCachePlacement } from "./services/render-cache-placement";
 import { runSubtitleReviewQa } from "./services/subtitle-review-qa";
 
@@ -81,8 +82,15 @@ if (process.env.APP_TEST_USER_DATA_PATH) {
 // Two instances on one App Data folder overwrite each other's project and settings files (R1-15).
 // Electron scopes this lock to the userData path, so it must be requested after the override above:
 // isolated smoke and QA profiles then never contend with a real running instance.
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) app.exit(0);
+// A portable update handoff relaunches while the old process still holds the lock, so that
+// relaunch (marked by UPDATE_HANDOFF_ARG) retries for a bounded time before giving up.
+const singleInstanceLock = acquireSingleInstanceLock({
+  requestLock: () => app.requestSingleInstanceLock(),
+  isUpdateHandoff: process.argv.includes(UPDATE_HANDOFF_ARG),
+}).then((acquired) => {
+  if (!acquired) app.exit(0);
+  return acquired;
+});
 app.on("second-instance", () => {
   const existing = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
   if (!existing) return;
@@ -351,7 +359,7 @@ function createWindow(): BrowserWindow {
 
 void app.whenReady().then(async () => {
   // A losing second instance must never initialize stores on the shared App Data folder.
-  if (!hasSingleInstanceLock) return;
+  if (!(await singleInstanceLock)) return;
   // The UI is dark-only; this makes the native Windows title bar dark too.
   nativeTheme.themeSource = "dark";
   const updates = new PortableUpdateService(
@@ -578,7 +586,7 @@ void app.whenReady().then(async () => {
         const executable = await updates.verifiedLaunch();
         await remoteControl.stop();
         if (!updates.isArmed || target.isDestroyed()) throw new Error("已取消版本切換。");
-        app.relaunch({ execPath: executable, args: [] });
+        app.relaunch({ execPath: executable, args: [UPDATE_HANDOFF_ARG] });
       } catch (error) {
         release?.();
         updateClosing = false;
