@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SourceAsset } from "../src/shared/domain";
 import { ProjectStore, sameProjectFilePath } from "../src/main/services/project-store";
 import { mainRenderSelections, retainedRangesForAsset } from "../src/shared/editing-rules";
@@ -268,6 +268,141 @@ describe("ProjectStore", () => {
     expect(restarted.getProjectFileState().filePath).toBeUndefined();
     expect(restarted.getProject().id).toBe(created.project.id);
     expect(await readFile(sourcePath, "utf8")).toBe("read-only-original");
+  });
+
+  describe("project switch consistency (R1-03)", () => {
+    async function savedProjectA(root: string) {
+      const dataRoot = path.join(root, "data");
+      const store = new ProjectStore(dataRoot);
+      await store.initialize();
+      const sourcePath = path.join(root, "source.mp4");
+      await writeFile(sourcePath, "read-only-original");
+      await store.addAssets([asset(sourcePath)]);
+      const projectPath = path.join(root, "a.swproj");
+      const saved = await store.saveProjectAs(projectPath, "Project A");
+      return { dataRoot, store, projectPath, savedId: saved.project.id };
+    }
+
+    // A directory at the session pointer path makes the pointer write fail deterministically on every OS.
+    async function blockSessionPointer(store: ProjectStore): Promise<void> {
+      await rm(store.sessionPath, { force: true });
+      await mkdir(store.sessionPath);
+    }
+
+    // Lets the manifest write succeed, then fails the session pointer write so the rollback path runs.
+    function failSessionPointerAfterManifest(store: ProjectStore): void {
+      const target = store as unknown as { writeJsonFile: (filePath: string, value: unknown) => Promise<void> };
+      const original = target.writeJsonFile.bind(store);
+      vi.spyOn(target, "writeJsonFile").mockImplementation(async (filePath, value) => {
+        if (filePath === store.sessionPath) throw new Error("session pointer write failed");
+        return original(filePath, value);
+      });
+    }
+
+    async function otherProjectFile(root: string, store: ProjectStore): Promise<string> {
+      const bPath = path.join(root, "b.swproj");
+      await writeFile(bPath, JSON.stringify({ ...store.getProject(), id: "project-b", name: "Project B" }), "utf8");
+      return bPath;
+    }
+
+    it("newProject throws when the session pointer cannot be written and keeps project A on disk and in memory", async () => {
+      const root = await tempRoot();
+      const { dataRoot, store, projectPath, savedId } = await savedProjectA(root);
+      const bytesBefore = await readFile(projectPath);
+      await blockSessionPointer(store);
+
+      await expect(store.newProject()).rejects.toThrow();
+      expect(store.getProject().id).toBe(savedId);
+      expect(store.getProjectFileState().filePath).toBe(path.resolve(projectPath));
+      expect((await readFile(projectPath)).equals(bytesBefore)).toBe(true);
+
+      const restarted = new ProjectStore(dataRoot);
+      await restarted.initialize();
+      expect(restarted.getProject().id).toBe(savedId);
+    });
+
+    it("openProject throws when the session pointer cannot be written and project A survives a restart", async () => {
+      const root = await tempRoot();
+      const { dataRoot, store, projectPath, savedId } = await savedProjectA(root);
+      const bPath = await otherProjectFile(root, store);
+      const bytesBefore = await readFile(projectPath);
+      await blockSessionPointer(store);
+
+      await expect(store.openProject(bPath)).rejects.toThrow();
+      expect(store.getProject().id).toBe(savedId);
+      expect((await readFile(projectPath)).equals(bytesBefore)).toBe(true);
+
+      const restarted = new ProjectStore(dataRoot);
+      await restarted.initialize();
+      expect(restarted.getProject().id).toBe(savedId);
+    });
+
+    it("saveProjectAs throws when the session pointer cannot be written and leaves the active file and new file untouched", async () => {
+      const root = await tempRoot();
+      const { dataRoot, store, projectPath, savedId } = await savedProjectA(root);
+      const bytesBefore = await readFile(projectPath);
+      const copyPath = path.join(root, "copy.swproj");
+      await blockSessionPointer(store);
+
+      await expect(store.saveProjectAs(copyPath, "Copy")).rejects.toThrow();
+      expect(store.getProject().id).toBe(savedId);
+      expect(store.getProject().name).toBe("Project A");
+      expect(store.getProjectFileState().filePath).toBe(path.resolve(projectPath));
+      expect((await readFile(projectPath)).equals(bytesBefore)).toBe(true);
+      await expect(readFile(copyPath)).rejects.toThrow();
+
+      const restarted = new ProjectStore(dataRoot);
+      await restarted.initialize();
+      expect(restarted.getProject().id).toBe(savedId);
+    });
+
+    it("newProject restores the manifest it already overwrote when the session pointer write fails", async () => {
+      const root = await tempRoot();
+      const { dataRoot, store, projectPath, savedId } = await savedProjectA(root);
+      failSessionPointerAfterManifest(store);
+
+      await expect(store.newProject()).rejects.toThrow("session pointer write failed");
+      expect(store.getProject().id).toBe(savedId);
+      expect(JSON.parse(await readFile(store.manifestPath, "utf8")).id).toBe(savedId);
+
+      const restarted = new ProjectStore(dataRoot);
+      await restarted.initialize();
+      expect(restarted.getProject().id).toBe(savedId);
+      expect(restarted.getProjectFileState().filePath).toBe(path.resolve(projectPath));
+    });
+
+    it("openProject restores the manifest it already overwrote when the session pointer write fails", async () => {
+      const root = await tempRoot();
+      const { dataRoot, store, savedId } = await savedProjectA(root);
+      const bPath = await otherProjectFile(root, store);
+      failSessionPointerAfterManifest(store);
+
+      await expect(store.openProject(bPath)).rejects.toThrow("session pointer write failed");
+      expect(store.getProject().id).toBe(savedId);
+      expect(JSON.parse(await readFile(store.manifestPath, "utf8")).id).toBe(savedId);
+
+      const restarted = new ProjectStore(dataRoot);
+      await restarted.initialize();
+      expect(restarted.getProject().id).toBe(savedId);
+    });
+
+    it("saveProjectAs removes the new file and restores the manifest when the session pointer write fails", async () => {
+      const root = await tempRoot();
+      const { dataRoot, store, projectPath, savedId } = await savedProjectA(root);
+      const copyPath = path.join(root, "copy.swproj");
+      failSessionPointerAfterManifest(store);
+
+      await expect(store.saveProjectAs(copyPath, "Copy")).rejects.toThrow("session pointer write failed");
+      expect(store.getProject().id).toBe(savedId);
+      expect(store.getProjectFileState().filePath).toBe(path.resolve(projectPath));
+      await expect(readFile(copyPath)).rejects.toThrow();
+      expect(JSON.parse(await readFile(store.manifestPath, "utf8")).id).toBe(savedId);
+
+      const restarted = new ProjectStore(dataRoot);
+      await restarted.initialize();
+      expect(restarted.getProject().id).toBe(savedId);
+      expect(restarted.getProjectFileState().filePath).toBe(path.resolve(projectPath));
+    });
   });
 
   it("opens an explicitly selected old project and leaves the current project unchanged when the file is invalid", async () => {

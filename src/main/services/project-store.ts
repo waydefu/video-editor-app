@@ -89,6 +89,15 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+async function readTextIfExists(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 function defaultPhotoSoundEffect(): ProjectManifest["photoSoundEffect"] {
   return {
     id: DUNES_SHUTTER_EFFECT_ID,
@@ -613,16 +622,22 @@ export class ProjectStore {
       this.current = createProject();
       await this.writeProjectFile(this.manifestPath, this.current);
     }
+    // A broken session pointer or unreadable project file only means "no active project file".
+    let reopened: { project: ProjectManifest; filePath: string } | undefined;
     try {
       const session = JSON.parse(await readFile(this.sessionPath, "utf8")) as { filePath?: unknown };
       if (typeof session.filePath === "string" && session.filePath.trim()) {
         const resolved = path.resolve(session.filePath);
-        const { project: opened } = await this.readProjectFile(resolved);
-        this.current = opened;
-        this.activeProjectPath = resolved;
-        await this.writeProjectFile(this.manifestPath, opened);
+        reopened = { project: (await this.readProjectFile(resolved)).project, filePath: resolved };
       }
     } catch {
+      reopened = undefined;
+    }
+    if (reopened) {
+      await this.writeProjectFile(this.manifestPath, reopened.project);
+      this.current = reopened.project;
+      this.activeProjectPath = reopened.filePath;
+    } else {
       this.activeProjectPath = undefined;
     }
     this.clearHistory();
@@ -681,8 +696,11 @@ export class ProjectStore {
         name,
         updatedAt: new Date().toISOString(),
       };
-      await this.persistProject(next, resolved);
-      await this.writeSessionPointer(resolved);
+      await this.writeJsonFilesTogether([
+        { filePath: resolved, value: next },
+        { filePath: this.manifestPath, value: next },
+        { filePath: this.sessionPath, value: { filePath: resolved } },
+      ]);
       const previous = this.getProject();
       this.current = next;
       this.activeProjectPath = resolved;
@@ -700,9 +718,11 @@ export class ProjectStore {
   async newProject(): Promise<NewProjectResult> {
     const project = await this.queueProjectFileOperation(async () => {
       const next = createProject();
-      await this.writeProjectFile(this.manifestPath, next);
       // An empty session pointer is ignored by initialize(), so a restart will not reopen the old file.
-      await this.writeJsonFile(this.sessionPath, {});
+      await this.writeJsonFilesTogether([
+        { filePath: this.manifestPath, value: next },
+        { filePath: this.sessionPath, value: {} },
+      ]);
       const previous = this.getProject();
       this.current = next;
       this.activeProjectPath = undefined;
@@ -728,8 +748,10 @@ export class ProjectStore {
       const read = await this.readProjectFile(resolved);
       const opened = read.project;
       backupPath = read.backupPath;
-      await this.writeProjectFile(this.manifestPath, opened);
-      await this.writeSessionPointer(resolved);
+      await this.writeJsonFilesTogether([
+        { filePath: this.manifestPath, value: opened },
+        { filePath: this.sessionPath, value: { filePath: resolved } },
+      ]);
       const previous = this.getProject();
       this.current = opened;
       this.activeProjectPath = resolved;
@@ -1875,23 +1897,47 @@ export class ProjectStore {
   }
 
   private async persistProject(project: ProjectManifest, explicitPath = this.activeProjectPath): Promise<void> {
-    if (explicitPath) await this.writeProjectFile(explicitPath, project);
-    await this.writeProjectFile(this.manifestPath, project);
-  }
-
-  private async writeSessionPointer(filePath: string): Promise<void> {
-    await this.writeJsonFile(this.sessionPath, { filePath });
+    const writes = explicitPath ? [{ filePath: explicitPath, value: project }] : [];
+    await this.writeJsonFilesTogether([...writes, { filePath: this.manifestPath, value: project }]);
   }
 
   private async writeProjectFile(filePath: string, project: ProjectManifest): Promise<void> {
     await this.writeJsonFile(filePath, project);
   }
 
+  /**
+   * Writes several JSON files as one unit. The previous contents of every file are captured before the first
+   * write. If any write fails, the files that were attempted are restored (or removed when they did not exist)
+   * and the original error is rethrown. A failed restore is ignored so the caller still sees the original error.
+   */
+  private async writeJsonFilesTogether(writes: { filePath: string; value: unknown }[]): Promise<void> {
+    const previous: { filePath: string; text: string | undefined }[] = [];
+    for (const { filePath } of writes) previous.push({ filePath, text: await readTextIfExists(filePath) });
+    let attempted = 0;
+    try {
+      for (const { filePath, value } of writes) {
+        attempted += 1;
+        await this.writeJsonFile(filePath, value);
+      }
+    } catch (error) {
+      for (const { filePath, text } of previous.slice(0, attempted).reverse()) {
+        await (text === undefined ? rm(filePath, { force: true }) : this.writeTextFile(filePath, text)).catch(
+          () => undefined,
+        );
+      }
+      throw error;
+    }
+  }
+
   private async writeJsonFile(filePath: string, value: unknown): Promise<void> {
+    await this.writeTextFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
+  }
+
+  private async writeTextFile(filePath: string, text: string): Promise<void> {
     await mkdir(path.dirname(filePath), { recursive: true });
     const partialPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.partial`);
     try {
-      await writeFile(partialPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      await writeFile(partialPath, text, { encoding: "utf8", flag: "wx" });
       await finalizePartialOutput(partialPath, filePath);
     } catch (error) {
       await rm(partialPath, { force: true });
