@@ -105,3 +105,125 @@ describe("portable updates", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
+
+interface FakeRelease {
+  version: string;
+  gate?: Promise<void>;
+}
+
+function releaseFetch(release: FakeRelease) {
+  return vi.fn<typeof fetch>(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/releases/latest"))
+      return Response.json({
+        tag_name: `v${release.version}`,
+        draft: false,
+        prerelease: false,
+        assets: [{ name: manifest.file }, { name: "scenerywalker-portable-update.json" }],
+      });
+    if (url.endsWith(".json")) return new Response(signed({ ...manifest, version: release.version }));
+    await release.gate;
+    return new Response(new Uint8Array(archive));
+  });
+}
+
+async function updateFixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "portable-update-"));
+  const keyPath = path.join(root, "public.pem");
+  await writeFile(keyPath, publicPem);
+  return { root, keyPath, updateRoot: path.join(root, "updates") };
+}
+
+describe("portable update state priority (R2-04)", () => {
+  it("keeps a verified staged package READY when checking again", async () => {
+    const fixture = await updateFixture();
+    try {
+      const service = new PortableUpdateService(
+        "0.88.0",
+        true,
+        fixture.updateRoot,
+        fixture.keyPath,
+        releaseFetch({ version: "0.89.0" }),
+      );
+      expect((await service.download()).state).toBe("READY");
+      const again = await service.check();
+      expect(again.state).toBe("READY");
+      expect(again.latestVersion).toBe("0.89.0");
+      expect(await readFile(await service.verifiedArchive())).toEqual(archive);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("re-verifies a corrupt staged package on check, reports it and allows re-download", async () => {
+    const fixture = await updateFixture();
+    try {
+      const service = new PortableUpdateService(
+        "0.88.0",
+        true,
+        fixture.updateRoot,
+        fixture.keyPath,
+        releaseFetch({ version: "0.89.0" }),
+      );
+      expect((await service.download()).state).toBe("READY");
+      await writeFile(await service.verifiedArchive(), Buffer.alloc(archive.length));
+      const status = await service.check();
+      expect(status.state).toBe("AVAILABLE");
+      expect(status.message).toMatch(/未通過重新驗證/);
+      expect(await readdir(fixture.updateRoot)).toEqual([]);
+      expect((await service.download()).state).toBe("READY");
+      expect(await readFile(await service.verifiedArchive())).toEqual(archive);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not regress the UI state while a download is in progress", async () => {
+    const fixture = await updateFixture();
+    try {
+      const release: FakeRelease = { version: "0.89.0" };
+      const service = new PortableUpdateService(
+        "0.88.0",
+        true,
+        fixture.updateRoot,
+        fixture.keyPath,
+        releaseFetch(release),
+      );
+      expect((await service.download()).state).toBe("READY");
+      release.version = "0.90.0";
+      let openGate!: () => void;
+      release.gate = new Promise<void>((resolve) => (openGate = resolve));
+      const inFlight = service.download();
+      const during = await service.check();
+      expect(during.state).toBe("READY");
+      expect(during.latestVersion).toBe("0.89.0");
+      openGate();
+      expect((await inFlight).state).toBe("READY");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the verified staged package usable when a newer version appears", async () => {
+    const fixture = await updateFixture();
+    try {
+      const release: FakeRelease = { version: "0.89.0" };
+      const service = new PortableUpdateService(
+        "0.88.0",
+        true,
+        fixture.updateRoot,
+        fixture.keyPath,
+        releaseFetch(release),
+      );
+      expect((await service.download()).state).toBe("READY");
+      release.version = "0.90.0";
+      const status = await service.check();
+      expect(status.state).toBe("READY");
+      expect(status.latestVersion).toBe("0.89.0");
+      expect(status.message).toMatch(/0\.90\.0/);
+      expect(await readFile(await service.verifiedArchive())).toEqual(archive);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+});
