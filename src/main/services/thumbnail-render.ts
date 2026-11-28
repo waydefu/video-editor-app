@@ -3,6 +3,12 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SourceAsset, ThumbnailCandidate } from "../../shared/domain";
 import { finalizePartialOutput } from "./atomic-output";
+import { assertOutputPathNotProtected, type ProtectedPathEntry } from "./protected-output-path";
+
+export interface ThumbnailRenderOptions {
+  /** Other project-referenced files (all sources, BGM) that the output must never touch. */
+  protectedPaths?: readonly ProtectedPathEntry[];
+}
 
 function escapeFilterPath(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
@@ -18,11 +24,17 @@ export async function renderThumbnail(
   outputPath: string,
   format: "jpg" | "png",
   ffmpegExecutable = process.env.FFMPEG_PATH || "ffmpeg",
+  options: ThumbnailRenderOptions = {},
 ): Promise<{ sizeBytes: number; width: 1280; height: 720 }> {
   if (!asset.sourcePath || !path.isAbsolute(asset.sourcePath)) throw new Error("縮圖來源路徑無效。");
   const extension = path.extname(outputPath).toLowerCase();
   if ((format === "jpg" && extension !== ".jpg" && extension !== ".jpeg") || (format === "png" && extension !== ".png"))
     throw new Error("縮圖輸出副檔名與格式不一致。");
+  const protectedPaths: ProtectedPathEntry[] = [
+    { label: "縮圖來源素材", path: asset.sourcePath },
+    ...(options.protectedPaths ?? []),
+  ];
+  await assertOutputPathNotProtected(outputPath, protectedPaths);
   await mkdir(path.dirname(outputPath), { recursive: true });
   const partial = `${outputPath}.${process.pid}.partial${extension}`;
   const textPath = `${partial}.txt`;
@@ -69,6 +81,8 @@ export async function renderThumbnail(
     const file = await stat(partial);
     if (!file.isFile() || file.size < 128) throw new Error("縮圖檔案無效。");
     if (file.size > 2 * 1024 * 1024) throw new Error("縮圖超過 YouTube 2 MB 上限，請改用 JPG 或降低畫面複雜度後重試。");
+    // Re-check identity right before commit: a protected file may have appeared or been linked since the start.
+    await assertOutputPathNotProtected(outputPath, protectedPaths);
     await finalizePartialOutput(partial, outputPath);
     return { sizeBytes: file.size, width: 1280, height: 720 };
   } finally {

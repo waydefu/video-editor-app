@@ -116,6 +116,7 @@ import { nextAvailableOutputPath, safePreviewFileName } from "./services/output-
 import { MusicSuggestionService } from "./services/music-suggestion";
 import { AiPublishAssetsService } from "./services/ai-publish-assets";
 import { renderThumbnail } from "./services/thumbnail-render";
+import { protectedProjectPaths } from "./services/protected-output-path";
 import { buildRenderEstimate, buildRenderEstimateWorkload } from "./services/render-estimate";
 import { RenderPowerGuard } from "./services/render-power-guard";
 import { buildRuntimeRenderPolicy, captureSystemResources, resourceWarnings } from "./services/system-resource";
@@ -1532,7 +1533,9 @@ export function registerIpc(
     if (!candidate) throw new Error("找不到縮圖候選，請重新產生或選擇候選影格。");
     const asset = project.sources.find((item) => item.id === candidate.assetId);
     if (!asset) throw new Error("縮圖候選的來源素材不存在；來源檔沒有被修改。");
-    const result = await renderThumbnail(asset, candidate, token.outputPath, request.format);
+    const result = await renderThumbnail(asset, candidate, token.outputPath, request.format, undefined, {
+      protectedPaths: protectedProjectPaths(project),
+    });
     return { candidateId: candidate.id, outputPath: token.outputPath, ...result, format: request.format };
   });
   ipcMain.handle("external-player:get-settings", () => playerSettings.snapshotWithCurrentAvailability());
