@@ -1286,6 +1286,8 @@ export interface ProjectFileResult {
 
 export interface ProjectFileState {
   filePath?: string;
+  /** Set only when startup had to recover from a corrupt internal manifest; names the kept broken copy. */
+  recoveryNotice?: string;
 }
 
 export interface BgmImportResult {

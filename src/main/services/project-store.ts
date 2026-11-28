@@ -254,6 +254,15 @@ function isAiPublishAssetsShape(value: unknown): value is AiPublishAssets {
   );
 }
 
+// Copies a corrupt file to a unique sibling name (COPYFILE_EXCL never overwrites). Throws if the copy fails,
+// so the caller never replaces a file whose contents were not preserved.
+async function keepCorruptCopy(filePath: string): Promise<string> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const copyPath = `${filePath}.corrupt-${stamp}-${randomUUID().slice(0, 8)}`;
+  await copyFile(filePath, copyPath, constants.COPYFILE_EXCL);
+  return copyPath;
+}
+
 // Best effort: keep one untouched copy of a file per old schema version before it is rewritten by a migration.
 async function backupBeforeMigration(filePath: string, oldSchemaVersion: unknown): Promise<string | undefined> {
   if (
@@ -572,6 +581,7 @@ export class ProjectStore {
   private current: ProjectManifest = createProject();
   private writeChain: Promise<void> = Promise.resolve();
   private activeProjectPath?: string;
+  private startupRecoveryNotice?: string;
   private undoStack: ProjectManifest[] = [];
   private redoStack: ProjectManifest[] = [];
   private readonly historyLimit = 50;
@@ -586,6 +596,7 @@ export class ProjectStore {
 
   async initialize(): Promise<ProjectManifest> {
     await mkdir(path.dirname(this.manifestPath), { recursive: true });
+    let corruptManifestCopy: string | undefined;
     try {
       const parsed: unknown = JSON.parse(await readFile(this.manifestPath, "utf8"));
       if (!looksLikeProject(parsed)) throw new Error("manifest schema 不相容");
@@ -618,9 +629,17 @@ export class ProjectStore {
       if (migrated) await this.writeProjectFile(this.manifestPath, this.current);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") throw error;
-      this.current = createProject();
-      await this.writeProjectFile(this.manifestPath, this.current);
+      if (code === "ENOENT") {
+        this.current = createProject();
+        await this.writeProjectFile(this.manifestPath, this.current);
+      } else if (error instanceof SyntaxError) {
+        // Corrupt JSON: keep the broken bytes before anything can overwrite them, then fall back to the session pointer.
+        // Unknown-but-valid schemas still throw so a newer app's data is never replaced.
+        corruptManifestCopy = await keepCorruptCopy(this.manifestPath);
+        this.current = createProject();
+      } else {
+        throw error;
+      }
     }
     // A broken session pointer or unreadable project file only means "no active project file".
     let reopened: { project: ProjectManifest; filePath: string } | undefined;
@@ -638,8 +657,14 @@ export class ProjectStore {
       this.current = reopened.project;
       this.activeProjectPath = reopened.filePath;
     } else {
+      if (corruptManifestCopy) await this.writeProjectFile(this.manifestPath, this.current);
       this.activeProjectPath = undefined;
     }
+    this.startupRecoveryNotice = corruptManifestCopy
+      ? reopened
+        ? `內部專案清單已損毀，已從上次開啟的專案檔復原。損毀副本：${corruptManifestCopy}`
+        : `內部專案清單已損毀，且找不到可復原的專案檔，已建立新專案。損毀副本：${corruptManifestCopy}`
+      : undefined;
     this.clearHistory();
     return this.getProject();
   }
@@ -660,7 +685,10 @@ export class ProjectStore {
     };
   }
   getProjectFileState(): ProjectFileState {
-    return { filePath: this.activeProjectPath };
+    return {
+      filePath: this.activeProjectPath,
+      ...(this.startupRecoveryNotice ? { recoveryNotice: this.startupRecoveryNotice } : {}),
+    };
   }
   getRenderStateRoot(): string {
     return path.join(this.dataRoot, "projects", "render-state");
