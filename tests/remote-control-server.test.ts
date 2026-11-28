@@ -1,3 +1,4 @@
+import { request as httpRequest, type ClientRequest, type IncomingMessage } from "node:http";
 import { Script } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConcatRenderRequest } from "../src/shared/domain";
@@ -217,5 +218,111 @@ describe("RemoteControlServer", () => {
       projectName: "Reconnected Project",
     });
     expect(state.snapshot().state).toBe("IDLE");
+  });
+
+  it("R2-01: an authenticated command whose body completes after stop is rejected before dispatch", async () => {
+    const state = new RenderCommandState("LAN Project");
+    const startPrepared = vi.fn(async () => undefined);
+    state.setHandlers({ startPrepared, resumeCheckpoint: vi.fn(), cancel: vi.fn() });
+    state.prepare(
+      {
+        outputToken: "x",
+        orderedAssetIds: ["a".repeat(64)],
+        transitionSeconds: 0.3,
+        resolution: "1080P",
+      } as ConcatRenderRequest,
+      "out.mp4",
+    );
+    const server = new RemoteControlServer(state);
+    const auth = await paired(server);
+    const authenticate = vi.spyOn(
+      server as unknown as { authenticate: (request: IncomingMessage) => unknown },
+      "authenticate",
+    );
+    const url = new URL(auth.origin);
+    let clientRequest!: ClientRequest;
+    const responded = new Promise<number | undefined>((resolve, reject) => {
+      clientRequest = httpRequest(
+        {
+          hostname: url.hostname,
+          port: url.port,
+          path: "/api/command/start",
+          method: "POST",
+          agent: false,
+          headers: {
+            Cookie: auth.cookie,
+            Origin: auth.origin,
+            "X-Scenery-CSRF": auth.csrf,
+            "Content-Type": "application/json",
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve(response.statusCode));
+        },
+      );
+      clientRequest.on("error", reject);
+    });
+    // Headers and the first body chunk arrive; the server has authenticated and awaits the rest of the body.
+    clientRequest.write("{");
+    await vi.waitFor(() => expect(authenticate).toHaveBeenCalled());
+    const stopping = server.stop();
+    clientRequest.end("}");
+    expect(await responded).toBe(401);
+    await stopping;
+    expect(startPrepared).not.toHaveBeenCalled();
+    expect(state.snapshot().state).toBe("PREPARED");
+  });
+
+  it("R2-02: concurrent start calls each receive the complete running status", async () => {
+    const server = new RemoteControlServer(new RenderCommandState("LAN Project"));
+    running.push(server);
+    const [first, second] = await Promise.all([server.start(), server.start()]);
+    expect(second.enabled).toBe(true);
+    expect(second.port).toBeGreaterThan(0);
+    expect(second.port).toBe(first.port);
+    expect(second.pairingUrl).toMatch(/^http:\/\//);
+    expect(second.qrDataUrl).toMatch(/^data:image\//);
+  });
+
+  it("R2-02: a stop issued while start is in flight leaves no phantom server or QR code", async () => {
+    const server = new RemoteControlServer(new RenderCommandState("LAN Project"));
+    running.push(server);
+    await Promise.allSettled([server.start(), server.stop()]);
+    expect(server.status()).toMatchObject({
+      enabled: false,
+      port: undefined,
+      pairingUrl: undefined,
+      qrDataUrl: undefined,
+    });
+  });
+
+  it("R2-02: stop does not wait indefinitely for a stalled authenticated body", async () => {
+    const server = new RemoteControlServer(new RenderCommandState("LAN Project"));
+    const auth = await paired(server);
+    const authenticate = vi.spyOn(
+      server as unknown as { authenticate: (request: IncomingMessage) => unknown },
+      "authenticate",
+    );
+    const url = new URL(auth.origin);
+    const clientRequest = httpRequest({
+      hostname: url.hostname,
+      port: url.port,
+      path: "/api/command/start",
+      method: "POST",
+      agent: false,
+      headers: {
+        Cookie: auth.cookie,
+        Origin: auth.origin,
+        "X-Scenery-CSRF": auth.csrf,
+        "Content-Type": "application/json",
+      },
+    });
+    clientRequest.on("error", () => undefined);
+    clientRequest.write("{");
+    await vi.waitFor(() => expect(authenticate).toHaveBeenCalled());
+    await server.stop();
+    expect(server.status().enabled).toBe(false);
+    clientRequest.destroy();
   });
 });

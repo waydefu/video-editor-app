@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -152,5 +152,185 @@ describe("persistent preview output history", () => {
     const reopened = new OutputHistoryStore(path.join(root, "app-data"));
     await reopened.initialize();
     expect((await reopened.snapshot()).outputs).toHaveLength(1);
+  });
+});
+
+describe("output file identity (R2-05)", () => {
+  const probe = {
+    probe: vi.fn(async () => ({
+      width: 640,
+      height: 360,
+      displayWidth: 640,
+      displayHeight: 360,
+      durationMs: 20_000,
+      videoCodec: "h264",
+    })),
+  } as unknown as MediaProbe;
+
+  async function registeredStore(name: string) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "output-identity-"));
+    roots.push(root);
+    const outputPath = path.join(root, name);
+    await writeFile(outputPath, "original bytes");
+    const store = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await store.initialize();
+    await store.registerRender(
+      {
+        jobId: "identity-job",
+        outputPath,
+        sizeBytes: 14,
+        expectedDurationMs: 20_000,
+        transitionSeconds: 0.3,
+        resolution: "360P",
+        purpose: "CONCAT",
+      },
+      "Original project",
+      "original-id",
+    );
+    return { root, outputPath, store };
+  }
+
+  it("marks a same-size replacement CHANGED and refuses it as a trusted upload source", async () => {
+    const { outputPath, store } = await registeredStore("replaced.mp4");
+    const before = await stat(outputPath);
+    await writeFile(outputPath, "replaced bytes");
+    // Restore the original timestamp so only the content fingerprint can detect the swap.
+    await utimes(outputPath, before.atime, before.mtime);
+
+    expect(await store.get("identity-job")).toMatchObject({
+      identityState: "CHANGED",
+      successful: false,
+      exists: true,
+      projectName: "Original project",
+    });
+    await expect(store.getForUpload("identity-job")).rejects.toThrow(/已與登錄時不同/);
+    expect(await readFile(outputPath, "utf8")).toBe("replaced bytes");
+  });
+
+  it("reports a size or timestamp change in the snapshot without reading the file", async () => {
+    const { outputPath, store } = await registeredStore("resized.mp4");
+    await writeFile(outputPath, "much longer replacement bytes");
+    expect((await store.snapshot()).outputs[0]).toMatchObject({ identityState: "CHANGED", successful: false });
+  });
+
+  it("keeps an unchanged output verified and upload-ready", async () => {
+    const { store } = await registeredStore("unchanged.mp4");
+    expect(await store.get("identity-job")).toMatchObject({ identityState: "VERIFIED", successful: true });
+    expect(await store.getForUpload("identity-job")).toMatchObject({ identityState: "VERIFIED" });
+    expect((await store.snapshot()).outputs[0]).toMatchObject({ identityState: "VERIFIED" });
+  });
+
+  it("lists legacy entries without identity as UNVERIFIED and openable but not upload-ready", async () => {
+    const { root, store } = await registeredStore("legacy.mp4");
+    const raw = JSON.parse(await readFile(store.historyPath, "utf8"));
+    for (const item of raw.outputs) delete item.identity;
+    await writeFile(store.historyPath, JSON.stringify(raw));
+
+    const legacy = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await legacy.initialize();
+    expect((await legacy.snapshot()).outputs[0]).toMatchObject({ identityState: "UNVERIFIED", exists: true });
+    expect(await legacy.get("identity-job")).toMatchObject({ identityState: "UNVERIFIED", exists: true });
+    await expect(legacy.getForUpload("identity-job")).rejects.toThrow(/沒有檔案身分資料/);
+  });
+
+  it("records a fresh identity when a changed file is removed and chosen again", async () => {
+    const { outputPath, store } = await registeredStore("rechosen.mp4");
+    await writeFile(outputPath, "replaced bytes");
+    await store.removeRecord("identity-job");
+    const result = await store.importExisting([outputPath]);
+    expect(result).toMatchObject({ addedCount: 1, errors: [] });
+    const [reimported] = result.history.outputs;
+    expect(await store.getForUpload(reimported.jobId)).toMatchObject({ identityState: "VERIFIED" });
+    expect(await readFile(outputPath, "utf8")).toBe("replaced bytes");
+  });
+
+  it("confirms a legacy record in place and keeps its project, purpose, duration and created time", async () => {
+    const { root, outputPath, store } = await registeredStore("confirm-legacy.mp4");
+    const raw = JSON.parse(await readFile(store.historyPath, "utf8"));
+    for (const item of raw.outputs) delete item.identity;
+    await writeFile(store.historyPath, JSON.stringify(raw));
+    const legacy = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await legacy.initialize();
+    const before = await legacy.get("identity-job");
+    expect(before).toMatchObject({ identityState: "UNVERIFIED" });
+
+    const confirmed = await legacy.confirmIdentity("identity-job");
+    expect(confirmed).toMatchObject({
+      identityState: "VERIFIED",
+      exists: true,
+      outputPath: before.outputPath,
+      projectName: "Original project",
+      projectId: "original-id",
+      purpose: "CONCAT",
+      durationMs: 20_000,
+      resolution: "360P",
+      createdAt: before.createdAt,
+      successful: true,
+    });
+    expect(await legacy.getForUpload("identity-job")).toMatchObject({ identityState: "VERIFIED" });
+
+    const onDisk = JSON.parse(await readFile(legacy.historyPath, "utf8"));
+    expect(onDisk.schemaVersion).toBe(1);
+    expect(onDisk.outputs[0]).toMatchObject({
+      jobId: "identity-job",
+      projectName: "Original project",
+      projectId: "original-id",
+      durationMs: 20_000,
+    });
+    expect(onDisk.outputs[0].identity).toMatchObject({ sizeBytes: 14 });
+    expect(await readFile(outputPath, "utf8")).toBe("original bytes");
+  });
+
+  it("confirms a replaced file so it becomes VERIFIED and upload-ready with its record fields", async () => {
+    const { root, outputPath, store } = await registeredStore("confirm-changed.mp4");
+    await writeFile(outputPath, "replaced bytes");
+    expect(await store.get("identity-job")).toMatchObject({ identityState: "CHANGED" });
+
+    const confirmed = await store.confirmIdentity("identity-job");
+    expect(confirmed).toMatchObject({
+      identityState: "VERIFIED",
+      projectName: "Original project",
+      projectId: "original-id",
+      durationMs: 20_000,
+    });
+    expect(await store.getForUpload("identity-job")).toMatchObject({ identityState: "VERIFIED" });
+    expect((await store.snapshot()).outputs[0]).toMatchObject({ identityState: "VERIFIED" });
+
+    const reopened = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await reopened.initialize();
+    expect(await reopened.getForUpload("identity-job")).toMatchObject({ identityState: "VERIFIED" });
+  });
+
+  it("refuses to confirm a missing or unknown output and leaves the index untouched", async () => {
+    const { outputPath, store } = await registeredStore("confirm-missing.mp4");
+    const indexBefore = await readFile(store.historyPath, "utf8");
+    await rm(outputPath);
+    await expect(store.confirmIdentity("identity-job")).rejects.toThrow(/已移動、刪除或離線/);
+    await expect(store.confirmIdentity("no-such-job")).rejects.toThrow(/找不到/);
+    expect(await readFile(store.historyPath, "utf8")).toBe(indexBefore);
+    expect((await store.snapshot()).outputs[0]).toMatchObject({ identityState: "MISSING", exists: false });
+  });
+
+  it("confirms only the chosen record and keeps the index format with other legacy entries unverified", async () => {
+    const { root, store } = await registeredStore("confirm-one.mp4");
+    const other = path.join(root, "other-legacy.mp4");
+    await writeFile(other, "other bytes");
+    await store.importExisting([other]);
+    const raw = JSON.parse(await readFile(store.historyPath, "utf8"));
+    for (const item of raw.outputs) delete item.identity;
+    await writeFile(store.historyPath, JSON.stringify(raw));
+
+    const legacy = new OutputHistoryStore(path.join(root, "app-data"), probe);
+    await legacy.initialize();
+    await legacy.confirmIdentity("identity-job");
+
+    const states = Object.fromEntries(
+      (await legacy.snapshot()).outputs.map((item) => [item.fileName, item.identityState]),
+    );
+    expect(states).toEqual({ "confirm-one.mp4": "VERIFIED", "other-legacy.mp4": "UNVERIFIED" });
+    const onDisk = JSON.parse(await readFile(legacy.historyPath, "utf8"));
+    expect(onDisk.schemaVersion).toBe(1);
+    const untouched = onDisk.outputs.find((item: { outputPath: string }) => item.outputPath === other);
+    expect(untouched.identity).toBeUndefined();
   });
 });

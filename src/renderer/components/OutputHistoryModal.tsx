@@ -3,10 +3,18 @@ import type { BrowserUploadPlatform, PreviewOutputRecord } from "../../shared/do
 import { formatBytes, formatDate, formatDuration } from "../format";
 import { YoutubeUploadModal } from "./YoutubeUploadModal";
 import { OutputRecordActions, useOutputLibrary } from "./OutputLibrary";
+import { SafeDefaultButton } from "./SafeDefaultButton";
 
 interface Props {
   onClose(): void;
   onOpenYoutubeSettings(): void;
+}
+
+function identityLabel(output: PreviewOutputRecord): { text: string; tone: "ready" | "offline" } | undefined {
+  if (output.identityState === "CHANGED") return { text: "⚠ 檔案已變更，需重新確認", tone: "offline" };
+  if (output.identityState === "UNVERIFIED") return { text: "⚠ 需確認：舊紀錄沒有檔案身分資料", tone: "offline" };
+  if (output.identityState === "VERIFIED" && output.exists) return { text: "✓ 已核對與登錄時相同", tone: "ready" };
+  return undefined;
 }
 
 function purposeLabel(output: PreviewOutputRecord): string {
@@ -22,6 +30,7 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
   const { outputs, loading, error, refresh, setOutputs, setError } = useOutputLibrary();
   const [busyId, setBusyId] = useState<string>();
   const [confirmRemoveId, setConfirmRemoveId] = useState<string>();
+  const [confirmIdentityId, setConfirmIdentityId] = useState<string>();
   const [youtubeOutput, setYoutubeOutput] = useState<PreviewOutputRecord>();
   const [notice, setNotice] = useState<string>();
   const [importing, setImporting] = useState(false);
@@ -88,6 +97,22 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
     }
   };
 
+  const confirmIdentity = async (jobId: string) => {
+    setBusyId(jobId);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const updated = await window.sourceApp.confirmPreviewOutputIdentity(jobId);
+      setOutputs(outputs.map((item) => (item.jobId === updated.jobId ? updated : item)));
+      setNotice("已確認此檔案為這筆成品；現在可以使用上傳與投稿功能。");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyId(undefined);
+      setConfirmIdentityId(undefined);
+    }
+  };
+
   return (
     <div className="modal-backdrop output-history-backdrop" role="presentation">
       <section className="output-history-modal" role="dialog" aria-modal="true" aria-label="預覽成品紀錄">
@@ -126,6 +151,9 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
             <div className="output-history-list">
               {outputs.map((output) => {
                 const canPublish = output.purpose !== "INTRO" && output.purpose !== "CLIP";
+                // Upload buttons only appear for fully verified files; the main process enforces the same rule.
+                const uploadReady = output.identityState === "VERIFIED";
+                const identity = identityLabel(output);
                 return (
                   <article key={output.jobId} className={!output.exists ? "is-offline" : ""}>
                     <header>
@@ -137,6 +165,53 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
                         {output.exists ? "✓ 檔案可用" : "檔案已移動／離線"}
                       </span>
                     </header>
+                    {identity && (
+                      <p className={identity.tone === "ready" ? "history-file-ready" : "history-file-offline"}>
+                        {identity.text}
+                      </p>
+                    )}
+                    {output.identityState === "CHANGED" && (
+                      <p className="source-path">
+                        此檔案的大小、修改時間或內容與登錄時不同，可能已被替換；紀錄中的專案與時長不再代表此檔。已停用上傳與投稿。若確認目前這個檔案就是此成品，請按「確認此檔案」。
+                      </p>
+                    )}
+                    {output.identityState === "UNVERIFIED" && (
+                      <p className="source-path">
+                        此紀錄由舊版 App
+                        建立，尚未核對檔案身分。可播放與找出檔案，但已停用上傳與投稿；按「確認此檔案」即可核對並保留原有紀錄資料。
+                      </p>
+                    )}
+                    {(output.identityState === "UNVERIFIED" || output.identityState === "CHANGED") &&
+                      output.exists &&
+                      (confirmIdentityId === output.jobId ? (
+                        <div className="history-remove-confirm" role="alert">
+                          <span>
+                            {output.identityState === "CHANGED"
+                              ? "確認後，代表你接受目前這個檔案就是此筆成品；專案、片長等原紀錄欄位會保留，並允許上傳。"
+                              : "確認後，代表你核對過目前這個檔案就是此筆成品；原紀錄欄位會保留，並允許上傳。"}
+                          </span>
+                          <SafeDefaultButton type="button" onClick={() => setConfirmIdentityId(undefined)}>
+                            取消
+                          </SafeDefaultButton>
+                          <button
+                            className="primary-button"
+                            type="button"
+                            disabled={busyId === output.jobId}
+                            onClick={() => void confirmIdentity(output.jobId)}
+                          >
+                            確認此檔案
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={busyId !== undefined}
+                          onClick={() => setConfirmIdentityId(output.jobId)}
+                        >
+                          確認此檔案
+                        </button>
+                      ))}
                     <p className="source-path" title={output.outputPath}>
                       {output.outputPath}
                     </p>
@@ -171,7 +246,7 @@ export function OutputHistoryModal({ onClose, onOpenYoutubeSettings }: Props) {
                     </dl>
                     <OutputRecordActions
                       output={output}
-                      showPublish={canPublish}
+                      showPublish={canPublish && uploadReady}
                       onError={setError}
                       onCopySuccess={() => setNotice("已複製完整檔案路徑。")}
                       onYoutube={() => void youtubeChromeHandoff(output)}

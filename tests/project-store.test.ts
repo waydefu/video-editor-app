@@ -795,6 +795,86 @@ describe("ProjectStore", () => {
     expect(await readFile(manifestPath, "utf8")).toBe(raw);
   });
 
+  describe("startup recovery from a corrupt internal manifest (R2-06)", () => {
+    async function corruptManifestCopies(store: ProjectStore): Promise<string[]> {
+      const dir = path.dirname(store.manifestPath);
+      const base = path.basename(store.manifestPath);
+      return (await readdir(dir))
+        .filter((name) => name.startsWith(`${base}.corrupt-`))
+        .map((name) => path.join(dir, name));
+    }
+
+    it("recovers the intact session project when the internal manifest is corrupt, keeping the broken copy", async () => {
+      const root = await tempRoot();
+      const data = path.join(root, "data");
+      const store = new ProjectStore(data);
+      await store.initialize();
+      const saved = path.join(root, "saved.swproj");
+      await store.saveProjectAs(saved, "Saved");
+      const original = await readFile(saved);
+      await writeFile(store.manifestPath, "{incomplete", "utf8");
+
+      const restarted = new ProjectStore(data);
+      const project = await restarted.initialize();
+      expect(project.name).toBe("Saved");
+      expect(restarted.getProjectFileState().filePath).toBe(path.resolve(saved));
+      expect(restarted.getProjectFileState().recoveryNotice).toContain("復原");
+      expect(await readFile(saved)).toEqual(original);
+      const copies = await corruptManifestCopies(store);
+      expect(copies).toHaveLength(1);
+      expect(await readFile(copies[0], "utf8")).toBe("{incomplete");
+    });
+
+    it("starts a fresh project but keeps the broken copy when no session pointer exists", async () => {
+      const root = await tempRoot();
+      const data = path.join(root, "data");
+      const store = new ProjectStore(data);
+      await store.initialize();
+      await rm(store.sessionPath, { force: true });
+      await writeFile(store.manifestPath, "{incomplete", "utf8");
+
+      const restarted = new ProjectStore(data);
+      const project = await restarted.initialize();
+      expect(project.sources).toHaveLength(0);
+      expect(restarted.getProjectFileState().filePath).toBeUndefined();
+      expect(restarted.getProjectFileState().recoveryNotice).toContain("新專案");
+      const copies = await corruptManifestCopies(store);
+      expect(copies).toHaveLength(1);
+      expect(await readFile(copies[0], "utf8")).toBe("{incomplete");
+    });
+
+    it("starts a fresh project and keeps the broken copy when the session pointer is also broken", async () => {
+      const root = await tempRoot();
+      const data = path.join(root, "data");
+      const store = new ProjectStore(data);
+      await store.initialize();
+      await writeFile(store.sessionPath, "{broken pointer", "utf8");
+      await writeFile(store.manifestPath, "{incomplete", "utf8");
+
+      const restarted = new ProjectStore(data);
+      expect((await restarted.initialize()).sources).toHaveLength(0);
+      expect(restarted.getProjectFileState().filePath).toBeUndefined();
+      expect(restarted.getProjectFileState().recoveryNotice).toBeDefined();
+      const copies = await corruptManifestCopies(store);
+      expect(copies).toHaveLength(1);
+      expect(await readFile(copies[0], "utf8")).toBe("{incomplete");
+    });
+
+    it("keeps a normal restart unchanged: no notice and no broken copy", async () => {
+      const root = await tempRoot();
+      const data = path.join(root, "data");
+      const store = new ProjectStore(data);
+      await store.initialize();
+      const saved = path.join(root, "normal.swproj");
+      await store.saveProjectAs(saved, "Normal");
+
+      const restarted = new ProjectStore(data);
+      expect((await restarted.initialize()).name).toBe("Normal");
+      expect(restarted.getProjectFileState()).toEqual({ filePath: path.resolve(saved) });
+      expect(await corruptManifestCopies(store)).toHaveLength(0);
+    });
+  });
+
   it("validates volume automation and clips it explicitly when IN/OUT shrinks", async () => {
     const root = await tempRoot();
     const store = new ProjectStore(root);

@@ -143,4 +143,51 @@ describe("RenderCommandState", () => {
     await expect(state.waitAtSafeBoundary()).resolves.toBeUndefined();
     expect(resume).not.toHaveBeenCalled();
   });
+
+  it("R2-03: consumes the prepared request as preflight begins so the snapshot no longer offers Start", async () => {
+    const state = new RenderCommandState("Project");
+    let finish!: () => void;
+    const start = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          finish = () => reject(new Error("preflight stopped by test"));
+        }),
+    );
+    state.setHandlers({ startPrepared: start, resumeCheckpoint: vi.fn(), cancel: vi.fn() });
+    state.prepare(request, "C:\\private\\output.mp4");
+    await state.startPrepared();
+
+    expect(state.snapshot()).toMatchObject({ state: "PREFLIGHT", prepared: false });
+    expect(state.getPrepared()).toBeUndefined();
+    await expect(state.startPrepared()).rejects.toThrow("預檢");
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(() => state.prepare(request, "C:\\private\\output.mp4")).toThrow("已有轉檔工作正在進行");
+    finish();
+  });
+
+  it("R2-03: a failed preflight settles to FAILED and allows the PC to prepare again", async () => {
+    const state = new RenderCommandState("Project");
+    const start = vi.fn(async () => {
+      throw new Error("磁碟空間不足");
+    });
+    state.setHandlers({ startPrepared: start, resumeCheckpoint: vi.fn(), cancel: vi.fn() });
+    state.prepare(request, "C:\\private\\output.mp4");
+    await state.startPrepared();
+    await vi.waitFor(() => expect(state.snapshot().state).toBe("FAILED"));
+
+    expect(state.snapshot()).toMatchObject({ prepared: false, latestError: "磁碟空間不足" });
+    await vi.waitFor(() => expect(() => state.prepare(request, "C:\\private\\output.mp4")).not.toThrow());
+    expect(state.snapshot()).toMatchObject({ state: "PREPARED", prepared: true });
+  });
+
+  it("R2-03: a preflight that settles without starting returns to IDLE rather than advertising PREPARED", async () => {
+    const state = new RenderCommandState("Project");
+    state.setHandlers({ startPrepared: async () => ({}) as never, resumeCheckpoint: vi.fn(), cancel: vi.fn() });
+    state.prepare(request, "C:\\private\\output.mp4");
+    await state.startPrepared();
+    await vi.waitFor(() => expect(state.snapshot().state).toBe("IDLE"));
+
+    expect(state.snapshot()).toMatchObject({ prepared: false });
+    expect(state.getPrepared()).toBeUndefined();
+  });
 });

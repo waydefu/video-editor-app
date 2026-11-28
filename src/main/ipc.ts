@@ -63,7 +63,7 @@ import type {
 import { ConcatRenderService } from "./services/concat-render";
 import { IntroAnalyzer } from "./services/intro-analyzer";
 import { PreviewCache } from "./services/preview-cache";
-import { ProjectStore } from "./services/project-store";
+import { ProjectStore, type ProjectContext } from "./services/project-store";
 import { emptyCancelledResult, MEDIA_DIALOG_FILTERS, SourceService } from "./services/source-service";
 import { ExternalPlayerService } from "./services/external-player";
 import { PlayerSettingsStore } from "./services/player-settings";
@@ -116,6 +116,7 @@ import { nextAvailableOutputPath, safePreviewFileName } from "./services/output-
 import { MusicSuggestionService } from "./services/music-suggestion";
 import { AiPublishAssetsService } from "./services/ai-publish-assets";
 import { renderThumbnail } from "./services/thumbnail-render";
+import { protectedProjectPaths } from "./services/protected-output-path";
 import { buildRenderEstimate, buildRenderEstimateWorkload } from "./services/render-estimate";
 import { RenderPowerGuard } from "./services/render-power-guard";
 import { buildRuntimeRenderPolicy, captureSystemResources, resourceWarnings } from "./services/system-resource";
@@ -134,6 +135,7 @@ import {
   completedYoutubeUploadQualifies,
   PostSuccessPowerScheduler,
 } from "./services/post-success-power";
+import { activityBlockReason } from "./services/activity-gate";
 
 const SORT_MODES = new Set<SortMode>([
   "MANUAL_ORDER",
@@ -174,7 +176,10 @@ export function registerIpc(
   renderCommands: RenderCommandState,
   remoteControl: RemoteControlServer,
   postSuccessPower: PostSuccessPowerScheduler,
-): () => () => void {
+): {
+  sealForUpdate: () => () => void;
+  blockingWorkReason: (options?: { ignoreRenderAdmission?: boolean }) => string | undefined;
+} {
   const activity = new IpcActivityGate();
   const ipcMain = {
     handle: (channel: string, listener: Parameters<typeof electronIpcMain.handle>[1]) =>
@@ -533,6 +538,20 @@ export function registerIpc(
   };
   let activeSubtitleOperations = 0;
   let projectSwitchInProgress = false;
+  let activeProjectScopedJobs = 0;
+  // Import, BGM and metadata jobs commit into the project they started in. Admission is refused while a switch runs,
+  // and a switch is refused while any of these jobs is admitted. The context is captured before dialogs; the store
+  // re-checks it inside its write queue, so a job that outlives its project drops its result.
+  const runProjectScopedJob = async <T>(context: ProjectContext, operation: () => Promise<T>): Promise<T> => {
+    if (projectSwitchInProgress) throw new Error("專案正在切換，請稍後再試。");
+    if (!store.isCurrentProjectContext(context)) throw new Error("專案已切換，請重新開始這項作業。");
+    activeProjectScopedJobs += 1;
+    try {
+      return await operation();
+    } finally {
+      activeProjectScopedJobs -= 1;
+    }
+  };
   const withProjectOperation = async <T>(operation: () => Promise<T>): Promise<T> => {
     if (projectSwitchInProgress) throw new Error("專案正在切換，請在載入完成後重試字幕操作。");
     activeSubtitleOperations += 1;
@@ -542,15 +561,20 @@ export function registerIpc(
       activeSubtitleOperations -= 1;
     }
   };
-  const withRenderAdmission = <T>(operation: () => Promise<T>): Promise<T> =>
+  const withRenderAdmission = <T>(operation: () => Promise<T>, startsRender = false): Promise<T> =>
     renderAdmission.run(async () => {
       if (activity.isSealed) throw new Error("正在安全切換版本，暫時不能開始轉檔。");
       if (projectSwitchInProgress) throw new Error("專案正在切換，請完成後再轉檔。");
+      // A new render cancels any countdown before its preflight; the power check ignores render admission.
+      if (startsRender && postSuccessPower.isScheduled)
+        postSuccessPower.cancel("偵測到新的轉檔工作；已取消先前排定的電源動作。");
       return operation();
     });
   const assertNoRunningProjectJobs = () => {
     if (renderAdmission.busy) throw new Error("轉檔或資源作業正在進行，請完成後再切換專案。");
     if (projectSwitchInProgress) throw new Error("已有專案開啟或另存作業正在執行，請在完成後重試。");
+    if (activeProjectScopedJobs > 0)
+      throw new Error("匯入、配樂或素材中繼資料作業正在進行，請完成或取消後再切換專案。");
     if (
       activeSubtitleOperations > 0 ||
       subtitleVisualController ||
@@ -595,6 +619,7 @@ export function registerIpc(
   };
 
   const runImport = async (event: Electron.IpcMainInvokeEvent, mode: "FILES" | "FOLDER" | "INTRO_FILES") => {
+    const context = store.getProjectContext(); // Before the dialog: the dialog may stay open across a project switch.
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const isFolder = mode === "FOLDER";
     const preferenceKey = mode === "INTRO_FILES" ? "INTRO_MEDIA" : mode === "FILES" ? "SOURCE_MEDIA" : "SOURCE_FOLDER";
@@ -610,20 +635,30 @@ export function registerIpc(
     }
     await userPreferences.rememberDirectory(preferenceKey, result.filePaths[0], isFolder);
 
-    importController?.abort();
-    importController = new AbortController();
-    try {
-      return await sources.importSelected(result.filePaths, importController.signal, (progress) => {
-        if (!event.sender.isDestroyed()) event.sender.send("import:progress", progress);
-      });
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        return emptyCancelledResult(store.getProject());
+    return runProjectScopedJob(context, async () => {
+      // Each import owns its controller. Starting a new import replaces (and aborts) the previous owner.
+      importController?.abort();
+      const controller = new AbortController();
+      importController = controller;
+      try {
+        return await sources.importSelected(
+          result.filePaths,
+          controller.signal,
+          (progress) => {
+            if (!event.sender.isDestroyed()) event.sender.send("import:progress", progress);
+          },
+          context,
+        );
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return emptyCancelledResult(store.getProject());
+        }
+        throw error;
+      } finally {
+        // Only the owner clears the shared pointer; a newer import's controller must survive this finally.
+        if (importController === controller) importController = undefined;
       }
-      throw error;
-    } finally {
-      importController = undefined;
-    }
+    });
   };
 
   ipcMain.handle("app:get-info", () => ({ version: app.getVersion(), productName: app.getName() }));
@@ -872,7 +907,10 @@ export function registerIpc(
   ipcMain.handle("subtitle:force-re-review", (_event, scopes: SubtitleTimelineScope[]) =>
     store.forceSubtitleReReview(scopes),
   );
-  ipcMain.handle("source:metadata", (_event, assetId: string) => sources.ensureMetadata(assetId));
+  ipcMain.handle("source:metadata", (_event, assetId: string) => {
+    const context = store.getProjectContext();
+    return runProjectScopedJob(context, () => sources.ensureMetadata(assetId, undefined, context));
+  });
   ipcMain.handle("project:set-sort", (_event, sortMode: SortMode) => {
     if (!SORT_MODES.has(sortMode)) throw new Error("排序模式無效。");
     return store.setSortMode(sortMode);
@@ -988,12 +1026,16 @@ export function registerIpc(
   );
   ipcMain.handle("render-benchmark:run", async () => {
     if (concatController || renderAdmission.busy) throw new Error("目前已有 App 轉檔進行中，效能測試不會搶用資源。");
-    const releasePowerGuard = renderPowerGuard.acquire();
-    try {
-      return await renderBenchmark.run();
-    } finally {
-      releasePowerGuard();
-    }
+    // Claim the same render admission renders use, before the first await, so a
+    // second benchmark or a render cannot run alongside it.
+    return withRenderAdmission(async () => {
+      const releasePowerGuard = renderPowerGuard.acquire();
+      try {
+        return await renderBenchmark.run();
+      } finally {
+        releasePowerGuard();
+      }
+    });
   });
   const publishConcatProgress = (progress: import("../shared/domain").ConcatRenderProgress) => {
     renderCommands.updateProgress(progress);
@@ -1082,15 +1124,21 @@ export function registerIpc(
     let successfulResult: import("../shared/domain").ConcatRenderResult | undefined;
     try {
       renderCommands.markStarting(request);
-      const result = await concatRenderer.render(request, selectedOutput.outputPath, controller.signal, (progress) => {
-        updateBackgroundJob(backgroundJobId, {
-          percent: progress.percent,
-          detail: progress.currentSegment ?? progress.phase,
-          attemptElapsedMs: progress.attemptElapsedMs,
-          cumulativeElapsedMs: progress.cumulativeElapsedMs,
-        });
-        publishConcatProgress(progress);
-      });
+      const result = await concatRenderer.render(
+        request,
+        selectedOutput.outputPath,
+        controller.signal,
+        (progress) => {
+          updateBackgroundJob(backgroundJobId, {
+            percent: progress.percent,
+            detail: progress.currentSegment ?? progress.phase,
+            attemptElapsedMs: progress.attemptElapsedMs,
+            cumulativeElapsedMs: progress.cumulativeElapsedMs,
+          });
+          publishConcatProgress(progress);
+        },
+        { allowOverwrite: selectedOutput.allowOverwrite },
+      );
       await outputHistory.registerRender(result, store.getProject().name, store.getProject().id);
       finishBackgroundJob(backgroundJobId, result.cancelled ? "CANCELLED" : "COMPLETED", {
         detail: result.cancelled ? "使用者取消，已保留可播放結尾" : result.outputPath,
@@ -1121,7 +1169,7 @@ export function registerIpc(
     }
   };
   const executeConcatStart = (request: ConcatRenderRequest) =>
-    withRenderAdmission(() => executeConcatStartUnlocked(request));
+    withRenderAdmission(() => executeConcatStartUnlocked(request), true);
   ipcMain.handle("concat:start", (_event, request: ConcatRenderRequest) => executeConcatStart(request));
   ipcMain.handle("remote-control:prepare-render", async (_event, request: ConcatRenderRequest) => {
     if (renderAdmission.busy || projectSwitchInProgress) throw new Error("目前不能準備遠端轉檔。");
@@ -1308,7 +1356,7 @@ export function registerIpc(
       const id = checkpointId ?? (await concatRenderer.getResumeOffer())?.checkpointId;
       if (!id) throw new Error("目前沒有可續轉的 checkpoint。");
       return executeConcatResumeUnlocked(id);
-    });
+    }, true);
   ipcMain.handle("concat:resume", (_event, checkpointId: string) => executeConcatResume(checkpointId));
   renderCommands.setHandlers({
     startPrepared: executeConcatStart,
@@ -1346,6 +1394,7 @@ export function registerIpc(
     return outputHistory.importExisting(result.filePaths);
   });
   ipcMain.handle("output-history:remove-record", (_event, jobId: string) => outputHistory.removeRecord(jobId));
+  ipcMain.handle("output-history:confirm-identity", (_event, jobId: string) => outputHistory.confirmIdentity(jobId));
   ipcMain.handle(
     "intro:analyze",
     async (event, assetIds: string[], maxDurationMs: number, maxSegmentDurationMs: number) => {
@@ -1520,7 +1569,9 @@ export function registerIpc(
     if (!candidate) throw new Error("找不到縮圖候選，請重新產生或選擇候選影格。");
     const asset = project.sources.find((item) => item.id === candidate.assetId);
     if (!asset) throw new Error("縮圖候選的來源素材不存在；來源檔沒有被修改。");
-    const result = await renderThumbnail(asset, candidate, token.outputPath, request.format);
+    const result = await renderThumbnail(asset, candidate, token.outputPath, request.format, undefined, {
+      protectedPaths: protectedProjectPaths(project),
+    });
     return { candidateId: candidate.id, outputPath: token.outputPath, ...result, format: request.format };
   });
   ipcMain.handle("external-player:get-settings", () => playerSettings.snapshotWithCurrentAvailability());
@@ -1547,6 +1598,7 @@ export function registerIpc(
     externalPlayers.open(assetId, target),
   );
   ipcMain.handle("bgm:choose-files", async (event) => {
+    const context = store.getProjectContext();
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options: Electron.OpenDialogOptions = {
       title: "選擇 MP3 配樂",
@@ -1558,13 +1610,15 @@ export function registerIpc(
     if (result.canceled || !result.filePaths.length)
       return { cancelled: true, addedCount: 0, errors: [], project: store.getProject() };
     await userPreferences.rememberDirectory("BGM", result.filePaths[0]);
-    return bgm.importSelected(result.filePaths);
+    return runProjectScopedJob(context, () => bgm.importSelected(result.filePaths, undefined, context));
   });
-  ipcMain.handle("bgm:add-youtube-references", (_event, urls: string[]) =>
-    bgm.addYoutubeReferences(Array.isArray(urls) ? urls : []),
-  );
+  ipcMain.handle("bgm:add-youtube-references", (_event, urls: string[]) => {
+    const context = store.getProjectContext();
+    return runProjectScopedJob(context, () => bgm.addYoutubeReferences(Array.isArray(urls) ? urls : [], context));
+  });
   ipcMain.handle("bgm:resolve-reference", async (event, trackId: string, rightsConfirmed: boolean) => {
     if (!rightsConfirmed) throw new Error("請先確認音檔使用權，再指定本機 MP3。");
+    const context = store.getProjectContext();
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options: Electron.OpenDialogOptions = {
       title: "選擇自有或已授權的 MP3",
@@ -1575,7 +1629,9 @@ export function registerIpc(
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
     if (result.canceled || !result.filePaths[0]) return null;
     await userPreferences.rememberDirectory("BGM", result.filePaths[0]);
-    return bgm.resolveReference(trackId, result.filePaths[0], rightsConfirmed);
+    return runProjectScopedJob(context, () =>
+      bgm.resolveReference(trackId, result.filePaths[0], rightsConfirmed, undefined, context),
+    );
   });
   ipcMain.handle("bgm:sequence", () => store.sequenceBgmTracks());
   ipcMain.handle("project:set-source-audio-volume", (_event, volumePercent: number) =>
@@ -2975,18 +3031,23 @@ export function registerIpc(
   ipcMain.handle("youtube:cancel-connect", () => youtubeAuthController?.abort());
   ipcMain.handle("youtube:disconnect", () => youtubeUpload.disconnect());
   ipcMain.handle("youtube:upload", async (event, request: YoutubeUploadRequest) => {
+    // Admission must be claimed synchronously, before the first await, so a
+    // second click or retry cannot pass the busy check while the output lookup runs.
     if (youtubeUploadController) throw new Error("已有 YouTube 上傳正在進行中。");
-    const output = request && typeof request.jobId === "string" ? await outputHistory.get(request.jobId) : undefined;
-    if (!output || output.purpose === "CLIP")
-      throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
-    postSuccessPower.cancel("偵測到新的 YouTube 上傳；已取消先前排定的電源動作。");
-    const releasePowerGuard = renderPowerGuard.acquire();
     const controller = new AbortController();
     youtubeUploadController = controller;
     const cancelIfRendererCloses = () => controller.abort();
     event.sender.once("destroyed", cancelIfRendererCloses);
+    let releasePowerGuard: (() => void) | undefined;
     let successfulUpload = false;
     try {
+      const output =
+        request && typeof request.jobId === "string" ? await outputHistory.getForUpload(request.jobId) : undefined;
+      if (!output || output.purpose === "CLIP")
+        throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
+      if (controller.signal.aborted) throw new DOMException("YouTube 上傳已取消。", "AbortError");
+      postSuccessPower.cancel("偵測到新的 YouTube 上傳；已取消先前排定的電源動作。");
+      releasePowerGuard = renderPowerGuard.acquire();
       const result = await youtubeUpload.upload(output.outputPath, request, controller.signal, (progress) => {
         if (!event.sender.isDestroyed()) event.sender.send("youtube:upload-progress", progress);
       });
@@ -2995,7 +3056,7 @@ export function registerIpc(
     } finally {
       event.sender.removeListener("destroyed", cancelIfRendererCloses);
       if (youtubeUploadController === controller) youtubeUploadController = undefined;
-      releasePowerGuard();
+      releasePowerGuard?.();
       if (successfulUpload)
         postSuccessPower.notifySuccess(
           "YOUTUBE_UPLOAD_SUCCESS",
@@ -3031,13 +3092,13 @@ export function registerIpc(
   });
   ipcMain.handle("youtube:open-video", (_event, videoId: string) => youtubeUpload.openVideo(videoId));
   ipcMain.handle("youtube:prepare-chrome-handoff", async (_event, jobId: string) => {
-    const output = typeof jobId === "string" ? await outputHistory.get(jobId) : undefined;
+    const output = typeof jobId === "string" ? await outputHistory.getForUpload(jobId) : undefined;
     if (!output || output.purpose === "CLIP")
       throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
     return platformUploadHandoff.openYoutubeChrome(output.outputPath);
   });
   ipcMain.handle("platform-upload:open", async (_event, jobId: string, platform: BrowserUploadPlatform) => {
-    const output = typeof jobId === "string" ? await outputHistory.get(jobId) : undefined;
+    const output = typeof jobId === "string" ? await outputHistory.getForUpload(jobId) : undefined;
     if (!output || output.purpose === "INTRO" || output.purpose === "CLIP")
       throw new Error("片頭／單一時間段預覽不可直接當正片投稿；請選擇正片或已確認的既有 MP4。");
     return platformUploadHandoff.open(output.outputPath, platform);
@@ -3045,21 +3106,37 @@ export function registerIpc(
   ipcMain.handle("platform-upload:open-portal", (_event, platform: BrowserUploadPlatform) =>
     platformUploadHandoff.openPortal(platform),
   );
-  return () => {
+  // Single activity gate shared by update seal, app close and post-success power.
+  // The render admission flag is ignored only when a render itself schedules power (its own admission is active).
+  const blockingWorkReason = (options: { ignoreRenderAdmission?: boolean } = {}): string | undefined =>
+    activityBlockReason({
+      renderInFlight: renderPowerGuard.isActive,
+      renderPreflight: !options.ignoreRenderAdmission && renderAdmission.busy,
+      projectSwitching: projectSwitchInProgress,
+      backgroundWork: Boolean(
+        importController ||
+        introController ||
+        voiceInputController ||
+        musicSuggestionController ||
+        audioPreviewController ||
+        aiPublishController ||
+        youtubeAuthController ||
+        youtubeUploadController ||
+        activeSubtitleOperations > 0 ||
+        subtitleVisualController ||
+        subtitleAiCheckController ||
+        subtitleAiCheckRunPromise ||
+        aiSubtitleController ||
+        subtitleExportController ||
+        subtitlePreviewController ||
+        materialAnalysisController ||
+        previewControllers.size > 0,
+      ),
+    });
+  const sealForUpdate = (): (() => void) => {
     assertNoRunningProjectJobs();
-    if (
-      renderPowerGuard.isActive ||
-      importController ||
-      introController ||
-      voiceInputController ||
-      musicSuggestionController ||
-      audioPreviewController ||
-      aiPublishController ||
-      youtubeAuthController ||
-      youtubeUploadController ||
-      previewControllers.size > 0
-    )
-      throw new Error("目前還有匯入、預覽、AI 或上傳工作，請完成後再切換版本。");
+    if (blockingWorkReason()) throw new Error("目前還有匯入、預覽、AI 或上傳工作，請完成後再切換版本。");
     return activity.seal();
   };
+  return { sealForUpdate, blockingWorkReason };
 }

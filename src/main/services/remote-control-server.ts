@@ -10,6 +10,8 @@ const PAIRING_TTL_MS = 10 * 60_000;
 const SESSION_TTL_MS = 8 * 60 * 60_000;
 const SESSION_IDLE_MS = 30 * 60_000;
 const MAX_BODY_BYTES = 4_096;
+const BODY_READ_TIMEOUT_MS = 10_000;
+const STOP_DRAIN_MS = 1_000;
 
 interface PairingSecret {
   tokenHash: string;
@@ -18,6 +20,7 @@ interface PairingSecret {
 }
 
 interface SessionRecord {
+  key: string;
   expiresAt: number;
   lastSeenAt: number;
   remoteAddress: string;
@@ -89,14 +92,35 @@ function text(response: ServerResponse, status: number, contentType: string, bod
   response.end(body);
 }
 
+// Waits briefly for in-flight requests to finish, then drops what is still open so stop cannot hang on a stalled body.
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const drain = setTimeout(() => {
+      server.closeAllConnections();
+      resolve();
+    }, STOP_DRAIN_MS);
+    server.close(() => {
+      clearTimeout(drain);
+      resolve();
+    });
+    server.closeIdleConnections();
+  });
+}
+
 async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.length;
-    if (size > MAX_BODY_BYTES) throw new Error("請求內容過大。");
-    chunks.push(buffer);
+  // A stalled body must not keep the request (and therefore a stop) open indefinitely.
+  const deadline = setTimeout(() => request.destroy(new Error("請求內容讀取逾時。")), BODY_READ_TIMEOUT_MS);
+  try {
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_BODY_BYTES) throw new Error("請求內容過大。");
+      chunks.push(buffer);
+    }
+  } finally {
+    clearTimeout(deadline);
   }
   if (!chunks.length) return {};
   const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -115,6 +139,9 @@ export class RemoteControlServer {
   private readonly clients = new Map<ServerResponse, SessionRecord>();
   private readonly rates = new Map<string, RateRecord>();
   private readonly pairingRates = new Map<string, RateRecord>();
+  // Bumped by every stop; a request admitted under an older generation must not dispatch commands.
+  private generation = 0;
+  private lifecycle: Promise<void> = Promise.resolve();
   private unsubscribe?: () => void;
   private statusListener?: (status: RemoteControlStatus) => void;
 
@@ -124,7 +151,25 @@ export class RemoteControlServer {
     this.statusListener = listener;
   }
 
-  async start(): Promise<RemoteControlStatus> {
+  start(): Promise<RemoteControlStatus> {
+    return this.serialize(() => this.startNow());
+  }
+
+  stop(): Promise<RemoteControlStatus> {
+    return this.serialize(() => this.stopNow());
+  }
+
+  // start and stop run one at a time, so a concurrent caller waits and then receives the complete state.
+  private serialize<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.lifecycle.then(task);
+    this.lifecycle = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async startNow(): Promise<RemoteControlStatus> {
     if (this.server) return this.status();
     this.addresses = lanAddresses();
     const server = createServer((request, response) => void this.handle(request, response));
@@ -143,7 +188,7 @@ export class RemoteControlServer {
       return this.status();
     } catch (error) {
       // A failed bind or QR setup must not leave a phantom "enabled" server.
-      if (server.listening) await this.stop();
+      if (server.listening) await this.stopNow();
       else {
         this.server = undefined;
         this.port = undefined;
@@ -156,7 +201,8 @@ export class RemoteControlServer {
     }
   }
 
-  async stop(): Promise<RemoteControlStatus> {
+  private async stopNow(): Promise<RemoteControlStatus> {
+    this.generation += 1;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     for (const client of this.clients.keys()) client.end();
@@ -169,7 +215,7 @@ export class RemoteControlServer {
     this.qrDataUrl = undefined;
     const server = this.server;
     this.server = undefined;
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (server) await closeServer(server);
     this.port = undefined;
     this.notifyStatus();
     return this.status();
@@ -249,6 +295,18 @@ export class RemoteControlServer {
     return session.expiresAt > now && now - session.lastSeenAt <= SESSION_IDLE_MS;
   }
 
+  // Run after an awaited body and right before dispatch: the admission checked earlier may have been revoked since.
+  private stillAuthorized(request: IncomingMessage, session: SessionRecord, generation: number): boolean {
+    return (
+      generation === this.generation &&
+      this.sessions.get(session.key) === session &&
+      this.sessionValid(session) &&
+      session.remoteAddress === normalizeAddress(request.socket.remoteAddress) &&
+      this.allowedHost(request) &&
+      this.allowedOrigin(request)
+    );
+  }
+
   private authenticate(request: IncomingMessage): SessionRecord | undefined {
     const match = /(?:^|;\s*)scenery_remote=([A-Za-z0-9_-]{40,})(?:;|$)/.exec(request.headers.cookie ?? "");
     if (!match) return undefined;
@@ -267,6 +325,7 @@ export class RemoteControlServer {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const generation = this.generation;
     try {
       if (
         !isPrivateLanAddress(request.socket.remoteAddress) ||
@@ -308,6 +367,7 @@ export class RemoteControlServer {
         const sessionToken = token(36);
         const csrfToken = token(24);
         this.sessions.set(hash(sessionToken), {
+          key: hash(sessionToken),
           expiresAt: Date.now() + SESSION_TTL_MS,
           lastSeenAt: Date.now(),
           remoteAddress: normalizeAddress(request.socket.remoteAddress),
@@ -353,6 +413,10 @@ export class RemoteControlServer {
       }
       if (request.method === "POST" && url.pathname === "/api/command/cancel-intent") {
         await readJsonBody(request);
+        if (!this.stillAuthorized(request, authenticatedSession, generation)) {
+          json(response, 401, { error: "遠端控制授權已失效，請重新掃描 QR Code。" });
+          return;
+        }
         if (!["RUNNING", "PAUSING", "PAUSED"].includes(this.renderState.snapshot().state)) {
           json(response, 409, { error: "目前沒有可取消的轉檔工作。" });
           return;
@@ -371,6 +435,10 @@ export class RemoteControlServer {
         request.method === "POST" ? /^\/api\/command\/(start|pause|resume|cancel)$/.exec(url.pathname)?.[1] : undefined;
       if (command) {
         const body = await readJsonBody(request);
+        if (!this.stillAuthorized(request, authenticatedSession, generation)) {
+          json(response, 401, { error: "遠端控制授權已失效，請重新掃描 QR Code。" });
+          return;
+        }
         if (
           command === "cancel" &&
           (body.confirmation !== "CANCEL" ||

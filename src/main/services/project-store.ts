@@ -254,6 +254,15 @@ function isAiPublishAssetsShape(value: unknown): value is AiPublishAssets {
   );
 }
 
+// Copies a corrupt file to a unique sibling name (COPYFILE_EXCL never overwrites). Throws if the copy fails,
+// so the caller never replaces a file whose contents were not preserved.
+async function keepCorruptCopy(filePath: string): Promise<string> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const copyPath = `${filePath}.corrupt-${stamp}-${randomUUID().slice(0, 8)}`;
+  await copyFile(filePath, copyPath, constants.COPYFILE_EXCL);
+  return copyPath;
+}
+
 // Best effort: keep one untouched copy of a file per old schema version before it is rewritten by a migration.
 async function backupBeforeMigration(filePath: string, oldSchemaVersion: unknown): Promise<string | undefined> {
   if (
@@ -568,10 +577,45 @@ export function sameProjectFilePath(left: string, right: string, windows = proce
   return windows ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
+/**
+ * Identifies which project a background job started against. `generation` changes whenever the open project is
+ * replaced (new, open, save-as), even if the id is unchanged, so a job can never commit into a different project.
+ */
+export interface ProjectContext {
+  readonly projectId: string;
+  readonly generation: number;
+}
+
+export class StaleProjectContextError extends Error {
+  constructor() {
+    super("專案已切換或重新開啟，已捨棄這項背景作業的結果。");
+    this.name = "StaleProjectContextError";
+  }
+}
+
+export function isStaleProjectContextError(error: unknown): error is StaleProjectContextError {
+  return (
+    error instanceof StaleProjectContextError || (error instanceof Error && error.name === "StaleProjectContextError")
+  );
+}
+
+/** Only these technical fields may be written back by a probe or refresh; user edits are never part of it. */
+export interface SourceTechnicalPatch {
+  sizeBytes?: number;
+  fileModifiedAt?: string;
+  previewCacheKey?: string;
+  metadataState?: SourceAsset["metadataState"];
+  metadataError?: string;
+  mediaInfo?: SourceAsset["mediaInfo"];
+  previewRange?: SourceAsset["previewRange"];
+}
+
 export class ProjectStore {
   private current: ProjectManifest = createProject();
+  private generation = 0;
   private writeChain: Promise<void> = Promise.resolve();
   private activeProjectPath?: string;
+  private startupRecoveryNotice?: string;
   private undoStack: ProjectManifest[] = [];
   private redoStack: ProjectManifest[] = [];
   private readonly historyLimit = 50;
@@ -586,6 +630,7 @@ export class ProjectStore {
 
   async initialize(): Promise<ProjectManifest> {
     await mkdir(path.dirname(this.manifestPath), { recursive: true });
+    let corruptManifestCopy: string | undefined;
     try {
       const parsed: unknown = JSON.parse(await readFile(this.manifestPath, "utf8"));
       if (!looksLikeProject(parsed)) throw new Error("manifest schema 不相容");
@@ -618,9 +663,17 @@ export class ProjectStore {
       if (migrated) await this.writeProjectFile(this.manifestPath, this.current);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") throw error;
-      this.current = createProject();
-      await this.writeProjectFile(this.manifestPath, this.current);
+      if (code === "ENOENT") {
+        this.current = createProject();
+        await this.writeProjectFile(this.manifestPath, this.current);
+      } else if (error instanceof SyntaxError) {
+        // Corrupt JSON: keep the broken bytes before anything can overwrite them, then fall back to the session pointer.
+        // Unknown-but-valid schemas still throw so a newer app's data is never replaced.
+        corruptManifestCopy = await keepCorruptCopy(this.manifestPath);
+        this.current = createProject();
+      } else {
+        throw error;
+      }
     }
     // A broken session pointer or unreadable project file only means "no active project file".
     let reopened: { project: ProjectManifest; filePath: string } | undefined;
@@ -638,14 +691,28 @@ export class ProjectStore {
       this.current = reopened.project;
       this.activeProjectPath = reopened.filePath;
     } else {
+      if (corruptManifestCopy) await this.writeProjectFile(this.manifestPath, this.current);
       this.activeProjectPath = undefined;
     }
+    this.startupRecoveryNotice = corruptManifestCopy
+      ? reopened
+        ? `內部專案清單已損毀，已從上次開啟的專案檔復原。損毀副本：${corruptManifestCopy}`
+        : `內部專案清單已損毀，且找不到可復原的專案檔，已建立新專案。損毀副本：${corruptManifestCopy}`
+      : undefined;
+    this.generation += 1;
     this.clearHistory();
     return this.getProject();
   }
 
   getProject(): ProjectManifest {
     return clone(this.current);
+  }
+  /** Capture before any await (or dialog) so later commits can prove they still target the same project. */
+  getProjectContext(): ProjectContext {
+    return { projectId: this.current.id, generation: this.generation };
+  }
+  isCurrentProjectContext(context: ProjectContext): boolean {
+    return context.generation === this.generation && context.projectId === this.current.id;
   }
   subscribe(listener: (event: ProjectChangedEvent) => void): () => void {
     this.changeListeners.add(listener);
@@ -660,7 +727,10 @@ export class ProjectStore {
     };
   }
   getProjectFileState(): ProjectFileState {
-    return { filePath: this.activeProjectPath };
+    return {
+      filePath: this.activeProjectPath,
+      ...(this.startupRecoveryNotice ? { recoveryNotice: this.startupRecoveryNotice } : {}),
+    };
   }
   getRenderStateRoot(): string {
     return path.join(this.dataRoot, "projects", "render-state");
@@ -704,6 +774,7 @@ export class ProjectStore {
       const previous = this.getProject();
       this.current = next;
       this.activeProjectPath = resolved;
+      this.generation += 1;
       this.clearHistory();
       this.emitChanged(previous, next, ["SETTINGS"]);
       return this.getProject();
@@ -726,6 +797,7 @@ export class ProjectStore {
       const previous = this.getProject();
       this.current = next;
       this.activeProjectPath = undefined;
+      this.generation += 1;
       this.clearHistory();
       this.emitChanged(previous, next, [
         "SOURCES",
@@ -755,6 +827,7 @@ export class ProjectStore {
       const previous = this.getProject();
       this.current = opened;
       this.activeProjectPath = resolved;
+      this.generation += 1;
       this.clearHistory();
       this.emitChanged(previous, opened, [
         "SOURCES",
@@ -778,34 +851,68 @@ export class ProjectStore {
     };
   }
 
-  async addAssets(assets: SourceAsset[]): Promise<ProjectManifest> {
-    return this.mutate((project) => {
-      const existing = new Set(project.sources.map((asset) => asset.id));
-      const isInitialBatch = project.sources.length === 0;
-      for (const input of assets) {
-        if (existing.has(input.id)) continue;
-        const asset = {
-          ...input,
-          imageDurationMs:
-            input.kind === "IMAGE"
-              ? validateImageDurationMs(input.imageDurationMs ?? DEFAULT_IMAGE_DURATION_MS)
-              : undefined,
-          photoSoundEnabled: input.kind === "IMAGE" ? input.photoSoundEnabled !== false : undefined,
-          mainAudioGates: normalizeAudioTrackGates(input.mainAudioGates),
-          volumeSegments: input.volumeSegments ?? [],
-          mainExclusionRanges: input.mainExclusionRanges ?? [],
-          zoomSegments: input.zoomSegments ?? [],
-        };
-        project.sources.push(asset);
-        existing.add(asset.id);
-        if (isInitialBatch) project.timelineOrder.push(asset.id);
-        else project.pendingAssetIds.push(asset.id);
-      }
-      if (isInitialBatch && assets.length > 0) {
-        project.timelineOrder = sortAssets(project.sources, project.sortMode).map((asset) => asset.id);
-        this.bumpTimeline(project);
-      }
-    });
+  /** Pass the context captured when the job started; the commit is refused inside the write queue if it is stale. */
+  async addAssets(assets: SourceAsset[], context?: ProjectContext): Promise<ProjectManifest> {
+    return this.mutate(
+      (project) => {
+        const existing = new Set(project.sources.map((asset) => asset.id));
+        const isInitialBatch = project.sources.length === 0;
+        for (const input of assets) {
+          if (existing.has(input.id)) continue;
+          const asset = {
+            ...input,
+            imageDurationMs:
+              input.kind === "IMAGE"
+                ? validateImageDurationMs(input.imageDurationMs ?? DEFAULT_IMAGE_DURATION_MS)
+                : undefined,
+            photoSoundEnabled: input.kind === "IMAGE" ? input.photoSoundEnabled !== false : undefined,
+            mainAudioGates: normalizeAudioTrackGates(input.mainAudioGates),
+            volumeSegments: input.volumeSegments ?? [],
+            mainExclusionRanges: input.mainExclusionRanges ?? [],
+            zoomSegments: input.zoomSegments ?? [],
+          };
+          project.sources.push(asset);
+          existing.add(asset.id);
+          if (isInitialBatch) project.timelineOrder.push(asset.id);
+          else project.pendingAssetIds.push(asset.id);
+        }
+        if (isInitialBatch && assets.length > 0) {
+          project.timelineOrder = sortAssets(project.sources, project.sortMode).map((asset) => asset.id);
+          this.bumpTimeline(project);
+        }
+      },
+      true,
+      context,
+    );
+  }
+
+  /**
+   * Patches only the technical fields a probe or refresh produced. Returns undefined (commits nothing) when the asset
+   * was removed, its source path changed, or the guard values no longer match the file the probe measured.
+   * User edits (trim, image duration, zoom, audio settings, sort) are never overwritten.
+   */
+  async patchSourceTechnical(
+    context: ProjectContext,
+    assetId: string,
+    guard: { sourcePath: string; sizeBytes?: number; fileModifiedAt?: string },
+    patch: SourceTechnicalPatch,
+  ): Promise<SourceAsset | undefined> {
+    let patched: SourceAsset | undefined;
+    await this.mutate(
+      (project) => {
+        const index = project.sources.findIndex((item) => item.id === assetId);
+        if (index < 0) return;
+        const existing = project.sources[index];
+        if (existing.sourcePath !== guard.sourcePath) return;
+        if (guard.sizeBytes !== undefined && existing.sizeBytes !== guard.sizeBytes) return;
+        if (guard.fileModifiedAt !== undefined && existing.fileModifiedAt !== guard.fileModifiedAt) return;
+        project.sources[index] = { ...existing, ...patch };
+        patched = clone(project.sources[index]);
+      },
+      false,
+      context,
+    );
+    return patched;
   }
 
   async updateAsset(asset: SourceAsset): Promise<SourceAsset> {
@@ -1389,36 +1496,44 @@ export class ProjectStore {
     });
   }
 
-  async addBgmTracks(tracks: BgmTrack[]): Promise<ProjectManifest> {
-    return this.mutate((project) => {
-      for (const track of tracks) project.bgmTracks.push(validateBgmTrack(track));
-    });
+  async addBgmTracks(tracks: BgmTrack[], context?: ProjectContext): Promise<ProjectManifest> {
+    return this.mutate(
+      (project) => {
+        for (const track of tracks) project.bgmTracks.push(validateBgmTrack(track));
+      },
+      true,
+      context,
+    );
   }
-  async resolveBgmTrack(trackId: string, resolved: BgmTrack): Promise<ProjectManifest> {
-    return this.mutate((project) => {
-      const index = project.bgmTracks.findIndex((track) => track.id === trackId);
-      if (index < 0) throw new Error("找不到待補音檔的 YouTube 配樂參考。");
-      if (project.bgmTracks[index].resolutionStatus !== "NEEDS_LOCAL_FILE")
-        throw new Error("這個配樂項目已經有可用的本機音檔。");
-      project.bgmTracks[index] = validateBgmTrack({
-        ...resolved,
-        id: trackId,
-        sourceUrl: project.bgmTracks[index].sourceUrl,
-        rightsConfirmed: true,
-      });
-      let cursor = 0;
-      for (const track of project.bgmTracks) {
-        if (track.resolutionStatus === "NEEDS_LOCAL_FILE") {
+  async resolveBgmTrack(trackId: string, resolved: BgmTrack, context?: ProjectContext): Promise<ProjectManifest> {
+    return this.mutate(
+      (project) => {
+        const index = project.bgmTracks.findIndex((track) => track.id === trackId);
+        if (index < 0) throw new Error("找不到待補音檔的 YouTube 配樂參考。");
+        if (project.bgmTracks[index].resolutionStatus !== "NEEDS_LOCAL_FILE")
+          throw new Error("這個配樂項目已經有可用的本機音檔。");
+        project.bgmTracks[index] = validateBgmTrack({
+          ...resolved,
+          id: trackId,
+          sourceUrl: project.bgmTracks[index].sourceUrl,
+          rightsConfirmed: true,
+        });
+        let cursor = 0;
+        for (const track of project.bgmTracks) {
+          if (track.resolutionStatus === "NEEDS_LOCAL_FILE") {
+            track.timelineInMs = cursor;
+            track.timelineOutMs = cursor;
+            continue;
+          }
+          const span = track.sourceOutMs - track.sourceInMs;
           track.timelineInMs = cursor;
-          track.timelineOutMs = cursor;
-          continue;
+          track.timelineOutMs = cursor + span;
+          cursor += span;
         }
-        const span = track.sourceOutMs - track.sourceInMs;
-        track.timelineInMs = cursor;
-        track.timelineOutMs = cursor + span;
-        cursor += span;
-      }
-    });
+      },
+      true,
+      context,
+    );
   }
   async updateBgmTrack(track: BgmTrack): Promise<ProjectManifest> {
     return this.mutate((project) => {
@@ -1813,9 +1928,15 @@ export class ProjectStore {
     });
     return normalized;
   }
-  private async mutate(mutator: (project: ProjectManifest) => void, recordHistory = true): Promise<ProjectManifest> {
+  private async mutate(
+    mutator: (project: ProjectManifest) => void,
+    recordHistory = true,
+    context?: ProjectContext,
+  ): Promise<ProjectManifest> {
     let result!: ProjectManifest;
     const operation = this.writeChain.then(async () => {
+      // Re-validated here, inside the queue, so a project switch that finished first cannot receive this write.
+      if (context && !this.isCurrentProjectContext(context)) throw new StaleProjectContextError();
       const previous = clone(this.current);
       const next = clone(this.current);
       mutator(next);

@@ -4,7 +4,12 @@ import type { ImportProgress, ImportResult, ProjectManifest, SourceAsset, Source
 import { DEFAULT_IMAGE_DURATION_MS } from "../../shared/domain";
 import { normalizedPathIdentity, previewCacheKey } from "./identity";
 import { MediaProbe } from "./media-probe";
-import { ProjectStore } from "./project-store";
+import {
+  isStaleProjectContextError,
+  type ProjectContext,
+  type SourceTechnicalPatch,
+  ProjectStore,
+} from "./project-store";
 
 const VIDEO_EXTENSIONS = new Set([
   ".mp4",
@@ -55,10 +60,15 @@ export class SourceService {
     private readonly probe: MediaProbe,
   ) {}
 
+  /**
+   * `context` should be captured by the caller before any dialog or await. If the project was replaced while the
+   * import ran, nothing is committed and the result is reported as cancelled.
+   */
   async importSelected(
     selectedPaths: string[],
     signal?: AbortSignal,
     onProgress?: (progress: ImportProgress) => void,
+    context: ProjectContext = this.store.getProjectContext(),
   ): Promise<ImportResult> {
     const files: string[] = [];
     let unsupportedCount = 0;
@@ -144,7 +154,16 @@ export class SourceService {
       }
     }
 
-    const updated = assets.length > 0 ? await this.store.addAssets(assets) : this.store.getProject();
+    // Checked again at the commit point: an abort during the last ADDING step must not add anything.
+    // All assets are committed in one write, so an abort here means no earlier items were committed either.
+    if (signal?.aborted) return emptyCancelledResult(this.store.getProject());
+    let updated: ProjectManifest;
+    try {
+      updated = assets.length > 0 ? await this.store.addAssets(assets, context) : this.store.getProject();
+    } catch (error) {
+      if (isStaleProjectContextError(error)) return emptyCancelledResult(this.store.getProject());
+      throw error;
+    }
     onProgress?.({
       phase: "ADDING",
       discovered: files.length,
@@ -161,8 +180,9 @@ export class SourceService {
     };
   }
 
-  async ensureMetadata(assetId: string, signal?: AbortSignal): Promise<SourceAsset> {
-    let asset = await this.refreshAsset(assetId);
+  async ensureMetadata(assetId: string, signal?: AbortSignal, context?: ProjectContext): Promise<SourceAsset> {
+    const ctx = context ?? this.store.getProjectContext();
+    let asset = await this.refreshAsset(assetId, ctx);
     const hasDisplayMetadata = Boolean(
       asset.mediaInfo?.displayWidth &&
       asset.mediaInfo?.displayHeight &&
@@ -171,26 +191,24 @@ export class SourceService {
     const hasAudioMetadata = !asset.mediaInfo?.audioCodec || Boolean(asset.mediaInfo.audioChannels);
     if (asset.metadataState === "READY" && hasDisplayMetadata && hasAudioMetadata) return asset;
 
+    // The guard pins the exact file version the probe measured; a changed or relinked file drops the result.
+    const guard = { sourcePath: asset.sourcePath, sizeBytes: asset.sizeBytes, fileModifiedAt: asset.fileModifiedAt };
+    let patch: SourceTechnicalPatch;
     try {
       const mediaInfo = await this.probe.probe(asset.sourcePath, signal);
-      asset = {
-        ...asset,
-        mediaInfo,
-        metadataState: "READY",
-        metadataError: undefined,
-      };
+      patch = { mediaInfo, metadataState: "READY", metadataError: undefined };
     } catch (error) {
       if ((error as Error).name === "AbortError") throw error;
-      asset = {
-        ...asset,
+      patch = {
         metadataState: "FAILED",
         metadataError: error instanceof Error ? error.message : String(error),
       };
     }
-    return this.store.updateAsset(asset);
+    return this.applyTechnicalPatch(ctx, assetId, guard, patch);
   }
 
-  async refreshAsset(assetId: string): Promise<SourceAsset> {
+  async refreshAsset(assetId: string, context?: ProjectContext): Promise<SourceAsset> {
+    const ctx = context ?? this.store.getProjectContext();
     const asset = this.store.getAsset(assetId);
     if (!asset) throw new Error("找不到來源項目。");
     const current = await stat(asset.sourcePath);
@@ -205,8 +223,7 @@ export class SourceService {
     const sourceChanged = asset.sizeBytes !== current.size || asset.fileModifiedAt !== modifiedAt;
     if (!sourceChanged && asset.previewCacheKey === expectedPreviewCacheKey) return asset;
 
-    const refreshed: SourceAsset = {
-      ...asset,
+    const patch: SourceTechnicalPatch = {
       sizeBytes: current.size,
       fileModifiedAt: modifiedAt,
       previewCacheKey: expectedPreviewCacheKey,
@@ -219,7 +236,18 @@ export class SourceService {
           }
         : {}),
     };
-    return this.store.updateAsset(refreshed);
+    return this.applyTechnicalPatch(ctx, assetId, { sourcePath: asset.sourcePath }, patch);
+  }
+
+  private async applyTechnicalPatch(
+    context: ProjectContext,
+    assetId: string,
+    guard: { sourcePath: string; sizeBytes?: number; fileModifiedAt?: string },
+    patch: SourceTechnicalPatch,
+  ): Promise<SourceAsset> {
+    const updated = await this.store.patchSourceTechnical(context, assetId, guard, patch);
+    if (!updated) throw new Error("來源項目已移除或已變更，已捨棄這次的中繼資料結果。");
+    return updated;
   }
 
   private async walkDirectory(

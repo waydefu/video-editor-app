@@ -50,6 +50,7 @@ import { moveWindowsCursor, safeActionCenter } from "./services/safe-cursor";
 import { RenderCommandState } from "./services/render-command-state";
 import { RemoteControlServer } from "./services/remote-control-server";
 import { PostSuccessPowerScheduler } from "./services/post-success-power";
+import { acquireSingleInstanceLock, UPDATE_HANDOFF_ARG } from "./services/single-instance";
 import { RenderCachePlacement } from "./services/render-cache-placement";
 import { runSubtitleReviewQa } from "./services/subtitle-review-qa";
 
@@ -78,11 +79,37 @@ if (process.env.APP_TEST_USER_DATA_PATH) {
   app.setPath("userData", path.resolve(process.env.APP_TEST_USER_DATA_PATH));
 }
 
+// Two instances on one App Data folder overwrite each other's project and settings files (R1-15).
+// Electron scopes this lock to the userData path, so it must be requested after the override above:
+// isolated smoke and QA profiles then never contend with a real running instance.
+// A portable update handoff relaunches while the old process still holds the lock, so that
+// relaunch (marked by UPDATE_HANDOFF_ARG) retries for a bounded time before giving up.
+const singleInstanceLock = acquireSingleInstanceLock({
+  requestLock: () => app.requestSingleInstanceLock(),
+  isUpdateHandoff: process.argv.includes(UPDATE_HANDOFF_ARG),
+}).then((acquired) => {
+  if (!acquired) app.exit(0);
+  return acquired;
+});
+app.on("second-instance", () => {
+  const existing = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+  if (!existing) return;
+  if (existing.isMinimized()) existing.restore();
+  existing.show();
+  existing.focus();
+});
+
 let mainWindow: BrowserWindow | undefined;
 let applicationQuitting = false;
 let remoteControlServer: RemoteControlServer | undefined;
 const renderPowerGuard = new RenderPowerGuard(powerSaveBlocker);
-const postSuccessPower = new PostSuccessPowerScheduler({ isBusy: () => renderPowerGuard.isActive });
+// Assigned once registerIpc wires the shared activity gate; until then the app counts as busy.
+let blockingWork: (options?: { ignoreRenderAdmission?: boolean }) => string | undefined = () =>
+  "應用程式尚未完成初始化";
+// Power countdown must not fire while imports, AI, uploads or renders are in flight.
+const postSuccessPower = new PostSuccessPowerScheduler({
+  isBusy: () => blockingWork({ ignoreRenderAdmission: true }) !== undefined,
+});
 const confirmedCloseWindowIds = new Set<number>();
 
 app.on("before-quit", (event) => {
@@ -93,7 +120,7 @@ app.on("before-quit", (event) => {
     Boolean(process.env.APP_SUBTITLE_REVIEW_QA);
   const target = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
   // Render active: reuse the in-app close confirmation instead of quitting past it.
-  if (!automated && renderPowerGuard.isActive && target) {
+  if (!automated && target && (renderPowerGuard.isActive || blockingWork() !== undefined)) {
     event.preventDefault();
     target.webContents.send("app:close-requested");
     return;
@@ -140,7 +167,7 @@ function createWindow(): BrowserWindow {
     window.webContents.send("app:close-requested");
   });
   window.on("query-session-end", (event) => {
-    if (renderPowerGuard.isActive) event.preventDefault();
+    if (renderPowerGuard.isActive || blockingWork() !== undefined) event.preventDefault();
   });
 
   const devServer = process.env.VITE_DEV_SERVER_URL;
@@ -337,6 +364,8 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(async () => {
+  // A losing second instance must never initialize stores on the shared App Data folder.
+  if (!(await singleInstanceLock)) return;
   // The UI is dark-only; this makes the native Windows title bar dark too.
   nativeTheme.themeSource = "dark";
   const updates = new PortableUpdateService(
@@ -513,7 +542,7 @@ void app.whenReady().then(async () => {
       ? path.join(process.resourcesPath, "assets", "benchmark-render-modes.ps1")
       : path.join(app.getAppPath(), "scripts", "benchmark-render-modes.ps1"),
   );
-  const sealForUpdate = registerIpc(
+  const { sealForUpdate, blockingWorkReason } = registerIpc(
     store,
     sources,
     previews,
@@ -542,6 +571,7 @@ void app.whenReady().then(async () => {
     remoteControl,
     postSuccessPower,
   );
+  blockingWork = blockingWorkReason;
   postSuccessPower.subscribe((status) => {
     for (const window of BrowserWindow.getAllWindows())
       if (!window.isDestroyed()) window.webContents.send("power-action:status", status);
@@ -555,6 +585,17 @@ void app.whenReady().then(async () => {
       target.webContents.send("app:close-requested");
       return;
     }
+    // Close, armed update and power share one gate: a refused close keeps the armed update intact.
+    const busyReason = blockingWork();
+    if (busyReason) {
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "尚未關閉",
+        message: "目前不能關閉 SceneryWalker。",
+        detail: `${busyReason}。請等待完成或取消後再關閉；進行中的作業不會被中斷。`,
+      });
+      return;
+    }
     if (updates.isArmed) {
       updateClosing = true;
       let release: (() => void) | undefined;
@@ -563,7 +604,7 @@ void app.whenReady().then(async () => {
         const executable = await updates.verifiedLaunch();
         await remoteControl.stop();
         if (!updates.isArmed || target.isDestroyed()) throw new Error("已取消版本切換。");
-        app.relaunch({ execPath: executable, args: [] });
+        app.relaunch({ execPath: executable, args: [UPDATE_HANDOFF_ARG] });
       } catch (error) {
         release?.();
         updateClosing = false;

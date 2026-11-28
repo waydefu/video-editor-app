@@ -90,7 +90,7 @@ export const DEFAULT_AUDIO_PROCESSING_OPTIONS: AudioProcessingOptions = {
 };
 
 export type RemoteRenderControlState =
-  "IDLE" | "PREPARED" | "RUNNING" | "PAUSING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED";
+  "IDLE" | "PREPARED" | "PREFLIGHT" | "RUNNING" | "PAUSING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED";
 
 export interface RemoteRenderSnapshot {
   revision: number;
@@ -1286,6 +1286,8 @@ export interface ProjectFileResult {
 
 export interface ProjectFileState {
   filePath?: string;
+  /** Set only when startup had to recover from a corrupt internal manifest; names the kept broken copy. */
+  recoveryNotice?: string;
 }
 
 export interface BgmImportResult {
@@ -1994,6 +1996,13 @@ export interface AudioPreviewResult {
   meter: AudioMeterReading;
 }
 
+/**
+ * Whether the file on disk still matches the identity recorded when the output was registered.
+ * VERIFIED: size, mtime and content fingerprint match. CHANGED: replaced or modified since registration.
+ * UNVERIFIED: legacy entry with no identity evidence. MISSING: file absent or empty.
+ */
+export type PreviewOutputIdentityState = "VERIFIED" | "CHANGED" | "UNVERIFIED" | "MISSING";
+
 export interface PreviewOutputRecord {
   jobId: string;
   /** Project identity captured when the render completed. Legacy/imported records may not have one. */
@@ -2013,6 +2022,8 @@ export interface PreviewOutputRecord {
   includedIntroSegmentCount?: number;
   projectName?: string;
   exists: boolean;
+  /** Optional for compatibility with older payloads; the current main process always sets it. */
+  identityState?: PreviewOutputIdentityState;
   aspectRatio?: "PORTRAIT_9_16" | "LANDSCAPE_16_9";
   attemptElapsedMs?: number;
   cumulativeElapsedMs?: number;
@@ -2458,6 +2469,7 @@ export interface AppApi {
   getPreviewOutputHistory(): Promise<PreviewOutputHistorySnapshot>;
   chooseExistingPreviewOutputs(): Promise<PreviewOutputImportResult>;
   removePreviewOutputRecord(jobId: string): Promise<PreviewOutputHistorySnapshot>;
+  confirmPreviewOutputIdentity(jobId: string): Promise<PreviewOutputRecord>;
   analyzeIntro(assetIds: string[], maxDurationMs: number, maxSegmentDurationMs: number): Promise<IntroAnalysisResult>;
   cancelIntroAnalysis(): Promise<void>;
   getAiSettings(): Promise<AiSettingsSnapshot>;

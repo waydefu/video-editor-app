@@ -53,6 +53,7 @@ import { ProjectStore } from "./project-store";
 import { SourceService } from "./source-service";
 import { MediaProbe } from "./media-probe";
 import { finalizePartialOutput } from "./atomic-output";
+import { assertOutputPathNotProtected, protectedProjectPaths } from "./protected-output-path";
 import { imageDurationMs, mainRenderSelections } from "../../shared/editing-rules";
 import { introSegmentsForOutput } from "../../shared/intro-duration";
 import {
@@ -443,14 +444,6 @@ export function buildWatermarkFilterChain(
     return `drawtext=fontfile='${escapeFfmpegFilterPath(fontFilePath)}':textfile='${escapeFfmpegFilterPath(textFilePath)}':reload=0:fontcolor=white:fontsize=${fontSize}:line_spacing=${lineSpacing}:x=${x}:y=h-text_h-${margin}:box=1:boxcolor=black@${ffmpegNumber(normalized.boxOpacityPercent / 100)}:boxborderw=${boxBorder}:shadowcolor=black@${ffmpegNumber(shadowOpacity)}:shadowx=${shadow}:shadowy=${shadow}:alpha='${alpha}':enable='${enable}'`;
   };
   return `${draw(normalized.chinese, resources.chineseTextFilePath, resources.chineseFontFilePath, 0.65)},${draw(normalized.english, resources.englishTextFilePath, resources.englishFontFilePath, 0.55)}`;
-}
-
-function samePath(left: string, right: string): boolean {
-  const normalize = (value: string) => {
-    const resolved = path.resolve(value);
-    return process.platform === "win32" ? resolved.toLocaleLowerCase("en-US") : resolved;
-  };
-  return normalize(left) === normalize(right);
 }
 
 function localZoomSegments(
@@ -2668,7 +2661,10 @@ export class ConcatRenderService {
     outputPath: string,
     signal?: AbortSignal,
     onProgress: (progress: ConcatRenderProgress) => void = () => undefined,
+    options: { allowOverwrite?: boolean } = {},
   ): Promise<ConcatRenderResult> {
+    // No-clobber is the default: only an explicit, user-confirmed overwrite may replace an existing file.
+    const allowOverwrite = options.allowOverwrite === true;
     if (!Array.isArray(request.orderedAssetIds)) throw new Error("影片片段順序格式無效。");
     const purpose = request.purpose ?? "CONCAT";
     if (purpose !== "CONCAT" && purpose !== "INTRO" && purpose !== "CLIP" && purpose !== "SHORTS")
@@ -2826,9 +2822,8 @@ export class ConcatRenderService {
     ) {
       throw new Error("至少一項素材無法取得有效媒體資訊，請先確認格式或 codec 是否受支援。");
     }
-    if (assets.some((asset) => samePath(asset.sourcePath, outputPath))) {
-      throw new Error("輸出路徑不可覆蓋任何來源影片。");
-    }
+    // Every project source (including excluded ones) and BGM file is protected, by file identity.
+    await assertOutputPathNotProtected(outputPath, protectedProjectPaths(project));
     const preserveNativeAsset = audioProcessing.mode === "PRESERVE_MULTICHANNEL" ? assets[0] : undefined;
     if (audioProcessing.mode === "PRESERVE_MULTICHANNEL") {
       if (
@@ -3096,7 +3091,7 @@ export class ConcatRenderService {
       } catch {
         throw new Error(`配樂「${track.fileName}」不存在或離線，已阻擋輸出。`);
       }
-      if (samePath(track.sourcePath, outputPath)) throw new Error("輸出路徑不可覆蓋配樂來源。");
+      await assertOutputPathNotProtected(outputPath, [{ label: `配樂「${track.fileName}」`, path: track.sourcePath }]);
     }
     const sourceAudioVolumePercent = currentProject.sourceAudioVolumePercent ?? DEFAULT_SOURCE_AUDIO_VOLUME_PERCENT;
     const audioProtection = validateAudioProtectionOptions(request.audioProtection);
@@ -3954,7 +3949,16 @@ export class ConcatRenderService {
         outTimeMs: completedDurationMs,
         expectedDurationMs: basePlan.expectedDurationMs,
       });
-      await finalizePartialOutput(audioPartialPath, outputPath);
+      // Re-check file identity at commit time, after FFmpeg, so a source linked or
+      // created during rendering is never replaced even by a confirmed overwrite.
+      await assertOutputPathNotProtected(outputPath, protectedProjectPaths(this.store.getProject()));
+      try {
+        await finalizePartialOutput(audioPartialPath, outputPath, { allowOverwrite });
+      } catch (error) {
+        // A refused commit keeps the finished partial so the user can recover it.
+        preserveAudioPartial = true;
+        throw error;
+      }
       diskMonitor.releaseTempJob("audio-temp");
       const outputStat = await stat(outputPath);
       if (!outputStat.isFile() || outputStat.size <= 0) throw new Error("輸出檔案驗證失敗。");

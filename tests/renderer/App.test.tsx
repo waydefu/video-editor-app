@@ -510,6 +510,17 @@ function mockApi(initialProject: ProjectManifest = project): AppApi {
       history: { schemaVersion: 1 as const, outputs: [] },
     })),
     removePreviewOutputRecord: vi.fn(async () => ({ schemaVersion: 1 as const, outputs: [] })),
+    confirmPreviewOutputIdentity: vi.fn(async (jobId: string) => ({
+      jobId,
+      outputPath: "C:/unused.mp4",
+      fileName: "unused.mp4",
+      purpose: "UNKNOWN" as const,
+      origin: "IMPORTED_EXISTING" as const,
+      createdAt: new Date().toISOString(),
+      sizeBytes: 1,
+      exists: true,
+      identityState: "VERIFIED" as const,
+    })),
     analyzeIntro: vi.fn(async () => ({
       analyzerVersion: "test",
       analyzedAssetCount: 0,

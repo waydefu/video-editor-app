@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import path from "node:path";
 import type {
   ConcatRenderResult,
   PreviewOutputHistorySnapshot,
+  PreviewOutputIdentityState,
   PreviewOutputImportResult,
   PreviewOutputPurpose,
   PreviewOutputRecord,
@@ -13,10 +15,80 @@ import type {
 import { MediaProbe } from "./media-probe";
 import { OUTPUT_RESOLUTIONS, outputDimensions } from "../../shared/render-profile";
 
-interface StoredOutput extends Omit<PreviewOutputRecord, "exists"> {}
+/**
+ * File identity recorded at registration. Size and mtime are checked on every listing;
+ * the fingerprint (size + first and last 4 MiB) is checked only on get/upload so that
+ * listing a library of multi-GB videos never hashes whole files.
+ */
+interface StoredIdentity {
+  sizeBytes: number;
+  mtimeMs: number;
+  fingerprint: string;
+}
+interface StoredOutput extends Omit<PreviewOutputRecord, "exists" | "identityState"> {
+  identity?: StoredIdentity;
+}
 interface StoredHistory {
   schemaVersion: 1;
   outputs: StoredOutput[];
+}
+
+const IDENTITY_EDGE_BYTES = 4 * 1024 * 1024;
+const CHANGED_MESSAGE =
+  "此預覽檔已與登錄時不同（大小、修改時間或內容有變），可能已被替換；為避免誤傳，已停止直接上傳。請在歷史清單按「確認此檔案」，確認目前的檔案即為此成品。";
+const UNVERIFIED_MESSAGE =
+  "此紀錄是舊版 App 建立的，沒有檔案身分資料，尚未確認可安全上傳。請在歷史清單按「確認此檔案」，確認目前的檔案即為此成品。";
+
+async function readRange(handle: FileHandle, position: number, length: number): Promise<Buffer> {
+  const buffer = Buffer.alloc(length);
+  const { bytesRead } = await handle.read(buffer, 0, length, position);
+  if (bytesRead !== length) throw new Error("讀取預覽檔指紋時檔案長度改變");
+  return buffer;
+}
+
+async function fingerprintFile(filePath: string, sizeBytes: number): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const hash = createHash("sha256");
+    hash.update(`head-tail-sha256-v1:${sizeBytes}:`);
+    const headLength = Math.min(sizeBytes, IDENTITY_EDGE_BYTES);
+    hash.update(await readRange(handle, 0, headLength));
+    const tailStart = Math.max(0, sizeBytes - IDENTITY_EDGE_BYTES);
+    hash.update(await readRange(handle, tailStart, sizeBytes - tailStart));
+    return hash.digest("hex");
+  } finally {
+    await handle.close();
+  }
+}
+
+async function captureIdentity(filePath: string): Promise<StoredIdentity | undefined> {
+  try {
+    const file = await stat(filePath);
+    if (!file.isFile() || file.size < 1) return undefined;
+    return {
+      sizeBytes: file.size,
+      mtimeMs: file.mtimeMs,
+      fingerprint: await fingerprintFile(filePath, file.size),
+    };
+  } catch {
+    // Without evidence the entry is shown as UNVERIFIED rather than trusted.
+    return undefined;
+  }
+}
+
+function statMatchesIdentity(identity: StoredIdentity, file: Stats): boolean {
+  return file.size === identity.sizeBytes && file.mtimeMs === identity.mtimeMs;
+}
+
+function identityStateFromStat(item: StoredOutput, file: Stats): PreviewOutputIdentityState {
+  if (!item.identity) return "UNVERIFIED";
+  return statMatchesIdentity(item.identity, file) ? "VERIFIED" : "CHANGED";
+}
+
+function publicFields(item: StoredOutput): Omit<PreviewOutputRecord, "exists" | "identityState"> {
+  const record: StoredOutput = structuredClone(item);
+  delete record.identity;
+  return record;
 }
 
 function canonicalPath(value: string): string {
@@ -43,6 +115,15 @@ function validVideoCodec(value: unknown): value is RenderVideoCodec {
     value === "H264_QSV" ||
     value === "H264"
   );
+}
+
+function sanitizeIdentity(value: unknown): StoredIdentity | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as Partial<StoredIdentity>;
+  if (!Number.isFinite(item.sizeBytes) || Number(item.sizeBytes) < 0) return undefined;
+  if (!Number.isFinite(item.mtimeMs)) return undefined;
+  if (typeof item.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(item.fingerprint)) return undefined;
+  return { sizeBytes: Number(item.sizeBytes), mtimeMs: Number(item.mtimeMs), fingerprint: item.fingerprint };
 }
 
 function sanitizeRecord(value: unknown): StoredOutput | undefined {
@@ -95,6 +176,7 @@ function sanitizeRecord(value: unknown): StoredOutput | undefined {
       Number.isFinite(item.cumulativeElapsedMs) && Number(item.cumulativeElapsedMs) >= 0
         ? Math.round(Number(item.cumulativeElapsedMs))
         : undefined,
+    identity: sanitizeIdentity(item.identity),
   };
 }
 
@@ -170,6 +252,7 @@ export class OutputHistoryStore {
       aspectRatio: result.aspectRatio,
       attemptElapsedMs: result.attemptElapsedMs,
       cumulativeElapsedMs: result.cumulativeElapsedMs,
+      identity: await captureIdentity(path.resolve(result.outputPath)),
     };
     await this.mutate((outputs) => {
       const key = canonicalPath(record.outputPath);
@@ -178,7 +261,7 @@ export class OutputHistoryStore {
         ...outputs.filter((item) => item.jobId !== record.jobId && canonicalPath(item.outputPath) !== key),
       ];
     });
-    return { ...record, exists: true };
+    return { ...publicFields(record), exists: true, identityState: record.identity ? "VERIFIED" : "UNVERIFIED" };
   }
 
   async importExisting(filePaths: string[]): Promise<PreviewOutputImportResult> {
@@ -215,6 +298,7 @@ export class OutputHistoryStore {
               : undefined;
         additions.push({
           jobId: randomUUID(),
+          identity: await captureIdentity(resolved),
           outputPath: resolved,
           fileName: path.basename(resolved),
           purpose: "UNKNOWN",
@@ -257,23 +341,68 @@ export class OutputHistoryStore {
     const outputs = await Promise.all(
       this.history.outputs.map(async (item): Promise<PreviewOutputRecord> => {
         const file = await stat(item.outputPath).catch(() => undefined);
+        const exists = Boolean(file?.isFile() && file.size > 0);
+        const identityState: PreviewOutputIdentityState =
+          exists && file ? identityStateFromStat(item, file) : "MISSING";
         return {
-          ...structuredClone(item),
-          exists: Boolean(file?.isFile() && file.size > 0),
+          ...publicFields(item),
+          exists,
           sizeBytes: file?.isFile() ? file.size : item.sizeBytes,
+          identityState,
+          successful: identityState === "CHANGED" ? false : item.successful,
         };
       }),
     );
     return { schemaVersion: 1, outputs };
   }
 
+  /**
+   * Opens the record for viewing or playing. A replaced file is reported as CHANGED instead of
+   * inheriting the original project, duration and completion marker.
+   */
   async get(jobId: string): Promise<PreviewOutputRecord> {
     if (typeof jobId !== "string") throw new Error("預覽成品 ID 無效。");
     const record = this.history.outputs.find((item) => item.jobId === jobId);
     if (!record) throw new Error("找不到這筆預覽成品紀錄。");
     const file = await stat(record.outputPath).catch(() => undefined);
     if (!file?.isFile() || file.size < 1) throw new Error("預覽成品已移動、刪除或離線；可保留紀錄供日後核對。");
-    return { ...structuredClone(record), exists: true, sizeBytes: file.size };
+    const identityState = await this.currentIdentityState(record, file);
+    return {
+      ...publicFields(record),
+      exists: true,
+      sizeBytes: file.size,
+      identityState,
+      successful: identityState === "CHANGED" ? false : record.successful,
+    };
+  }
+
+  /** Lookup for upload and Chrome handoff: only a fully verified output may be sent. */
+  async getForUpload(jobId: string): Promise<PreviewOutputRecord> {
+    const output = await this.get(jobId);
+    if (output.identityState === "VERIFIED") return output;
+    throw new Error(output.identityState === "CHANGED" ? CHANGED_MESSAGE : UNVERIFIED_MESSAGE);
+  }
+
+  /**
+   * Explicit user confirmation that the file now at the recorded path is this output.
+   * Captures a fresh identity in place and keeps every other field of the record.
+   * Refuses when the file is missing, empty or unreadable.
+   */
+  async confirmIdentity(jobId: string): Promise<PreviewOutputRecord> {
+    if (typeof jobId !== "string") throw new Error("預覽成品 ID 無效。");
+    const record = this.history.outputs.find((item) => item.jobId === jobId);
+    if (!record) throw new Error("找不到這筆預覽成品紀錄。");
+    const identity = await captureIdentity(record.outputPath);
+    if (!identity) throw new Error("預覽成品已移動、刪除或離線，無法確認；請先放回原檔再試。");
+    await this.mutate((outputs) => outputs.map((item) => (item.jobId === jobId ? { ...item, identity } : item)));
+    return this.get(jobId);
+  }
+
+  private async currentIdentityState(item: StoredOutput, file: Stats): Promise<PreviewOutputIdentityState> {
+    if (!item.identity) return "UNVERIFIED";
+    if (!statMatchesIdentity(item.identity, file)) return "CHANGED";
+    const fingerprint = await fingerprintFile(item.outputPath, file.size).catch(() => undefined);
+    return fingerprint === item.identity.fingerprint ? "VERIFIED" : "CHANGED";
   }
 
   async removeRecord(jobId: string): Promise<PreviewOutputHistorySnapshot> {

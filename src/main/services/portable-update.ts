@@ -127,6 +127,7 @@ export class PortableUpdateService {
   private staged?: { filePath: string; manifest: PortableManifest };
   private prepared?: PreparedPortableVersion;
   private armed = false;
+  private last?: AppUpdateStatus;
 
   constructor(
     private readonly currentVersion: string,
@@ -174,14 +175,53 @@ export class PortableUpdateService {
     };
   }
 
+  private remember(status: AppUpdateStatus): AppUpdateStatus {
+    this.last = status;
+    return status;
+  }
+
+  private async stagedIsValid(): Promise<boolean> {
+    return this.verifiedArchive().then(
+      () => true,
+      () => false,
+    );
+  }
+
+  /**
+   * State priority, highest first: ARMED > PREPARED > READY > AVAILABLE/MANUAL > CURRENT/DISABLED.
+   * A verified staged package keeps READY across checks; a check never regresses the state
+   * while an update operation is in flight.
+   */
   async check(): Promise<AppUpdateStatus> {
     if (this.prepared)
-      return this.result(
-        this.armed ? "ARMED" : "PREPARED",
-        this.armed ? "下次正常關閉時將切換新版。" : "新版已解壓並通過隔離啟動檢查。",
-        this.prepared.version,
+      return this.remember(
+        this.result(
+          this.armed ? "ARMED" : "PREPARED",
+          this.armed ? "下次正常關閉時將切換新版。" : "新版已解壓並通過隔離啟動檢查。",
+          this.prepared.version,
+        ),
       );
-    return (await this.discover()).status;
+    if (this.busy) return this.last ?? this.result("AVAILABLE", "更新作業進行中，請稍候。");
+    const staged = this.staged;
+    if (this.enabled && staged && compareVersions(staged.manifest.version, this.currentVersion) > 0) {
+      if (await this.stagedIsValid()) {
+        const newer = await this.discover().then(
+          (next) => next.manifest?.version,
+          () => undefined,
+        );
+        const message =
+          newer && compareVersions(newer, staged.manifest.version) > 0
+            ? `已驗證 v${staged.manifest.version} 更新套件可準備；已發現較新的 v${newer}，目前仍保留已驗證的套件。`
+            : "更新套件已下載及驗證，可在完成工作後手動切換。";
+        return this.remember(this.result("READY", message, staged.manifest.version));
+      }
+      this.staged = undefined;
+      await rm(staged.filePath, { force: true }).catch(() => undefined);
+      const next = await this.discover();
+      const message = "先前下載的更新套件未通過重新驗證（大小或 SHA-256 不符或檔案遺失），已移除，請重新下載。";
+      return this.remember(next.status.state === "AVAILABLE" ? { ...next.status, message } : next.status);
+    }
+    return this.remember((await this.discover()).status);
   }
 
   async download(): Promise<AppUpdateStatus> {
@@ -190,14 +230,14 @@ export class PortableUpdateService {
     let partial: string | undefined;
     try {
       const { status, manifest } = await this.discover();
-      if (!manifest) return status;
+      if (!manifest) return this.remember(status);
       if (this.prepared) throw new Error("已有準備完成的新版，請先完成切換。");
       await mkdir(this.root, { recursive: true });
       const filePath = path.join(this.root, `SceneryWalker-v${manifest.version}-${manifest.sha256.slice(0, 12)}.zip`);
       const existing = await stat(filePath).catch(() => undefined);
       if (existing?.isFile() && existing.size === manifest.bytes && (await fileDigest(filePath)) === manifest.sha256) {
         this.staged = { filePath, manifest };
-        return this.result("READY", "已驗證更新套件，可在完成工作後手動切換。", manifest.version);
+        return this.remember(this.result("READY", "已驗證更新套件，可在完成工作後手動切換。", manifest.version));
       }
       partial = `${filePath}.${randomUUID()}.partial`;
       const response = await getResponse(this.fetcher, assetUrl(manifest.version, ARCHIVE), 20 * 60_000);
@@ -218,7 +258,7 @@ export class PortableUpdateService {
       }
       await finalizePartialOutput(partial, filePath);
       this.staged = { filePath, manifest };
-      return this.result("READY", "更新套件已下載及驗證，可在完成工作後手動切換。", manifest.version);
+      return this.remember(this.result("READY", "更新套件已下載及驗證，可在完成工作後手動切換。", manifest.version));
     } finally {
       if (partial) await rm(partial, { force: true }).catch(() => undefined);
       this.busy = false;
@@ -236,7 +276,7 @@ export class PortableUpdateService {
     try {
       const archive = await this.verifiedArchive();
       this.prepared = await preparePortableVersion(archive, this.staged!.manifest, path.join(this.root, "versions"));
-      return this.result("PREPARED", "新版已解壓並通過隔離啟動檢查。", this.prepared.version);
+      return this.remember(this.result("PREPARED", "新版已解壓並通過隔離啟動檢查。", this.prepared.version));
     } finally {
       this.busy = false;
     }

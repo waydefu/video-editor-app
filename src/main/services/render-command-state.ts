@@ -72,7 +72,7 @@ export class RenderCommandState {
   }
 
   prepare(request: ConcatRenderRequest, outputDisplayPath: string): RemotePreparedRender {
-    if (this.launchPending || ["RUNNING", "PAUSING", "PAUSED"].includes(this.snapshotValue.state))
+    if (this.launchPending || ["PREFLIGHT", "RUNNING", "PAUSING", "PAUSED"].includes(this.snapshotValue.state))
       throw new Error("已有轉檔工作正在進行。");
     const record: PreparedRenderRecord = {
       request: structuredClone(request),
@@ -202,6 +202,7 @@ export class RenderCommandState {
 
   async startPrepared(): Promise<void> {
     if (!this.handlers) throw new Error("遠端命令尚未就緒。");
+    if (this.launchPending || this.snapshotValue.state === "PREFLIGHT") throw new Error("轉檔正在預檢，請稍候。");
     if (!this.prepared) throw new Error("Windows 端尚未準備可供遠端啟動的轉檔工作。");
     if (
       this.snapshotValue.state === "RUNNING" ||
@@ -209,9 +210,11 @@ export class RenderCommandState {
       this.snapshotValue.state === "PAUSED"
     )
       throw new Error("目前已有轉檔工作執行中。");
-    if (this.launchPending) throw new Error("轉檔正在預檢，請稍候。");
+    // Consume the prepared request in the same synchronous step that starts
+    // preflight, so the snapshot never advertises a Start that is already running.
     const request = structuredClone(this.prepared.request);
     this.prepared = undefined;
+    this.patch({ state: "PREFLIGHT", prepared: false, latestError: undefined });
     this.launch(() => this.handlers!.startPrepared(request));
   }
 
@@ -237,6 +240,10 @@ export class RenderCommandState {
       })
       .finally(() => {
         this.launchPending = false;
+        // A preflight that ended without starting a render (for example a
+        // cancelled one) must not leave the snapshot stuck in PREFLIGHT.
+        if (generation === this.jobGeneration && this.snapshotValue.state === "PREFLIGHT")
+          this.patch({ state: "IDLE", prepared: false });
       });
   }
 
