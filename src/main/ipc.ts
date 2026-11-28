@@ -2975,19 +2975,23 @@ export function registerIpc(
   ipcMain.handle("youtube:cancel-connect", () => youtubeAuthController?.abort());
   ipcMain.handle("youtube:disconnect", () => youtubeUpload.disconnect());
   ipcMain.handle("youtube:upload", async (event, request: YoutubeUploadRequest) => {
+    // Admission must be claimed synchronously, before the first await, so a
+    // second click or retry cannot pass the busy check while the output lookup runs.
     if (youtubeUploadController) throw new Error("已有 YouTube 上傳正在進行中。");
-    const output =
-      request && typeof request.jobId === "string" ? await outputHistory.getForUpload(request.jobId) : undefined;
-    if (!output || output.purpose === "CLIP")
-      throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
-    postSuccessPower.cancel("偵測到新的 YouTube 上傳；已取消先前排定的電源動作。");
-    const releasePowerGuard = renderPowerGuard.acquire();
     const controller = new AbortController();
     youtubeUploadController = controller;
     const cancelIfRendererCloses = () => controller.abort();
     event.sender.once("destroyed", cancelIfRendererCloses);
+    let releasePowerGuard: (() => void) | undefined;
     let successfulUpload = false;
     try {
+      const output =
+        request && typeof request.jobId === "string" ? await outputHistory.getForUpload(request.jobId) : undefined;
+      if (!output || output.purpose === "CLIP")
+        throw new Error("單一時間段預覽不可直接上傳；請選擇正片、片頭、Shorts 或已確認的既有 MP4。");
+      if (controller.signal.aborted) throw new DOMException("YouTube 上傳已取消。", "AbortError");
+      postSuccessPower.cancel("偵測到新的 YouTube 上傳；已取消先前排定的電源動作。");
+      releasePowerGuard = renderPowerGuard.acquire();
       const result = await youtubeUpload.upload(output.outputPath, request, controller.signal, (progress) => {
         if (!event.sender.isDestroyed()) event.sender.send("youtube:upload-progress", progress);
       });
@@ -2996,7 +3000,7 @@ export function registerIpc(
     } finally {
       event.sender.removeListener("destroyed", cancelIfRendererCloses);
       if (youtubeUploadController === controller) youtubeUploadController = undefined;
-      releasePowerGuard();
+      releasePowerGuard?.();
       if (successfulUpload)
         postSuccessPower.notifySuccess(
           "YOUTUBE_UPLOAD_SUCCESS",
